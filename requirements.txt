@@ -1,0 +1,10 @@
+fastapi
+loguru
+uvicorn
+pydantic-ai
+pandas
+pyaml
+pillow
+matplotlib
+streamlit
+st_pages

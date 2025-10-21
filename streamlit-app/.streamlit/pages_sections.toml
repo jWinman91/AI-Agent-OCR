@@ -1,0 +1,9 @@
+[[pages]]
+path = "src/agent_configurations.py"
+name = "Configure your PlotAgent"
+icon = "⚙️"
+
+[[pages]]
+path = "src/generate_plot.py"
+name = "Generate your plot"
+icon = "📈"
