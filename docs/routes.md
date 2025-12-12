@@ -1,0 +1,82 @@
+# Documentation on existing routes
+
+## Config handling API routes:
+- `/upload_config(config: ConfigModel) -> bool`:
+  - Purpose: Update a config file
+  - Params (ConfigModel):
+      - model: str
+      - model_provider: str
+      - mcp_server: str
+      - system_prompt_user: str
+  - Return: bool (success of update)
+- `/get_config(name: Literal["extractor", "plotter"]) -> ConfigModel`:
+  - Purpose: Get config file by name
+  - Params:
+    - name of config: str
+  - Return: config
+- `/get_all_configs() -> List[ConfigModel]`:
+  - Purpose: Get all config files
+  - Return: List of all config files
+- `/reset_config(name: Literal["extractor", "plotter"]) -> bool`:
+  - Purpose: Resets config to the default one from config.yaml
+  - Params:
+    - name  of config: str
+  - Return: bool (success of deletion)
+
+## Agent-related routes:
+- `/update_all_agent() -> bool`:
+  - Purpose: Recreates all agents with the current configuration from the DB
+  - Return: bool (success of recreation)
+- `/run_single_agent(user_prompt: str, agent_name: Literal["extractor", "plotter"]) -> AgentResult`:
+  - Purpose: Single run of either extractor or plotter agent
+  - Params:
+    - user prompt: str, prompt coming from user
+    - agent name: str, either extractor or plotter
+  - Return: AgentResult
+      - data_file_path: str | None
+      - plot_path: str | None
+      - tool_used: str | None
+      - code_summary: str | None
+      - error: str | None
+- `/run_agent_chain(user_prompt: str) -> AgentResult`:
+  - Purpose: Run the predefined chain of agent to generate the plot
+  - Params:
+    - user_prompt: str, prompt coming from user
+  - Return: AgentResult
+    - data_file_path: str | None
+    - plot_path: str | None
+    - tool_used: str | None
+    - code_summary: str | None
+    - error: str | None
+
+## File-managing routes:
+- `/uploadpdf(file: UploadFile) -> bool`:
+  - Purpose: Upload PDF file (only one pdf allowed)
+  - Params:
+    - file: UploadFile
+  - Return: bool (success of upload)
+- `/uploadimages(files: List[UploadFile]) -> bool`:
+  - Purpose: Upload images (list of png, jpg, etc. allowed)
+  - Params:
+    - files: List[UploadFile]
+  - Return: bool (success of upload)
+- `/uploaddatafile(file: UploadFile) -> bool`:
+  - Purpose: Upload data file (only one csv or xlsx allowed)
+  - Params:
+    - file: UploadFile
+  - Result: bool (success of upload)
+- `/set_extern_data_source(data_source_name: Literal[...]) -> bool`:
+  - Purpose: Set external data source for the AI to draw data from (e.g., yfinance, ...)
+  - Params:
+    - data_source_name: limited number of data sources
+  - Return: bool (success of setting the data source)
+- `/download_plot(plot_path: str) -> FileResponse`:
+  - Purpose: Download plot by filename
+  - Params:
+    - plot_path: str
+  - Return: FileResponse
+- `/download_data(data_file_path: str) -> FileResponse`:
+  - Purpose: Download data file by filename
+  - Params:
+    - data_file_path: str
+  - Return: FileResponse
