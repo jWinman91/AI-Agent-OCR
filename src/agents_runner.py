@@ -10,7 +10,7 @@ from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from PIL import Image
-from typing import List, Dict, Any, Literal, Union, Awaitable
+from typing import List, Dict, Any, Literal
 
 from src.utils.data_models import (OrchestratorOutput,
                                    PlotterResult,
@@ -24,8 +24,12 @@ from src.output_validator import OutputValidator
 import logging
 logging.basicConfig(level=logging.INFO)
 
+
 class AgentCreator:
-    def __init__(self, config: Dict[str, Dict[str, Any]], data_dir: str = "data", output_dir: str = "plots"):
+    def __init__(self,
+                 config: Dict[str, Dict[str, Any]],
+                 data_dir: str = "data",
+                 output_dir: str = "plots") -> None:
         self.config = config
 
         self.agent_outputs = {}
@@ -65,7 +69,11 @@ class AgentCreator:
             "plotter": plotter_example
         }
 
-        self._output_validator = OutputValidator(self._agent_names, self._agent_output_examples, self.agent_outputs)
+        self._output_validator = OutputValidator(
+            self._agent_names,
+            self._agent_output_examples,
+            self.agent_outputs
+        )
 
         self._data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
@@ -74,7 +82,7 @@ class AgentCreator:
 
 
     @staticmethod
-    def fill_system_prompt(cfg: Dict[str, Any], args: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def fill_system_prompt(cfg: Dict[str, Any],args: Dict[str, Any] | None = None) -> Dict[str, Any]:
         cfg = cfg.copy()
         if args:
             cfg["system_prompt"] = cfg["system_prompt"].format(**args)

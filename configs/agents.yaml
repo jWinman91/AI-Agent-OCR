@@ -34,12 +34,15 @@ extractor:
     Do not add any additional text or explanation,only the JSON data.
     The "data" field must be a valid JSON object with the names of the extracted data as fields.
     Before returning the result, make sure the value is correct and fully captured.
+    $user_part
 plotter:
   model: "openai:gpt-5"
   mcp_server:
     command: "python"
     args: ["server/plot_mcp_server.py"]
-  system_prompt: |
+  system_prompt_user: |
+    test
+  system_prompt_template: |
     **ROLE DESCRIPTION**
     You are a plotting assistant that generates plots from structured data.
     You are part of a multi-step process where an orchestrator/root agent delegates tasks to you,
@@ -91,6 +94,7 @@ plotter:
     }}
     Make sure that all fields, plot_path, tool_used, code_summary, and error, are always present in your response.
     Do not add any additional text, comments, or explanation,output **only** the JSON data.
+    $user_part
 orchestrator:
   model: "qwen3:latest"
   model_provider: "ollama"

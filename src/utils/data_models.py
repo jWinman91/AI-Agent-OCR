@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Any, Dict, Union
+from typing import Any, Dict, Union, Optional
 
 
 class ExtractorPrompt(BaseModel):
@@ -41,6 +41,18 @@ class FixJsonResult(BaseModel):
 AgentResult = Union[OrchestratorResult, PlotterResult, ExtractorResult]
 
 
+class ConfigModelDBReduced(BaseModel):
+    model: str
+    model_provider: Optional[str] = None
+    mcp_server: Optional[str] = None
+    system_prompt_user: str
+
+
+class ConfigModelDB(ConfigModelDBReduced):
+    system_prompt_template: str
+
+
 class ConfigModel(BaseModel):
     name: str
-    config: Dict[str, Any] = Field(default_factory=dict)
+    config: ConfigModelDBReduced
+

@@ -8,13 +8,17 @@ from loguru import logger
 
 from src.agents_creator import AgentCreator
 from src.config_builder import ConfigBuilder
-from src.utils.data_models import OrchestratorOutput, ConfigModel, AgentResult
+from src.utils.data_models import OrchestratorOutput, ConfigModel, AgentResult, ConfigModelDB
 
 
 class AiAgentOcrApp:
-    def __init__(self, ip: str = "127.0.0.1", port: int = 8000,
-                 data_dir: str = "data", output_dir: str = "plots", image_dir: str = "images",
-                 agent_config_path: str = "configs/agents.yaml"):
+    def __init__(self,
+                 ip: str = "127.0.0.1",
+                 port: int = 8000,
+                 data_dir: str = "data",
+                 output_dir: str = "plots",
+                 image_dir: str = "images",
+                 agent_config_path: str = "configs/agents.yaml") -> None:
         """
         Initializes the PlotAgentApp with the given parameters.
 
@@ -30,8 +34,11 @@ class AiAgentOcrApp:
         self._data_file_path = ""
 
         self._config_builder = ConfigBuilder(agent_config_path)
-        self._ai_ocr_agents = AgentCreator(self._config_builder.build_config(),
-                                           data_dir=data_dir, output_dir=output_dir)
+        self._ai_ocr_agents = AgentCreator(
+            self._config_builder.build_config(),
+            data_dir=data_dir,
+            output_dir=output_dir
+        )
 
         os.makedirs(image_dir, exist_ok=True)
         self._image_urls = []
@@ -39,34 +46,26 @@ class AiAgentOcrApp:
         self.app = FastAPI()
         self._register_routes()
 
-    @staticmethod
-    def load_yaml(config_path: str) -> dict:
-        """
-        Loads in a system prompt (and additional parameters) for the LLM and returns them as a tuple.
-        :param config_path: path to yaml file
-        :return: Tuple containing the system prompt and additional parameters
-        """
-        with open(config_path, 'r') as file:
-            config = yaml.safe_load(file)
-        return config
-
     def _register_routes(self):
         @self.app.post("/upload_config/")
         async def upload_config(config: ConfigModel) -> bool | None:
-            return self._config_builder.write_config_to_db(config.name, config.config)
+            return self._config_builder.update_config_in_db(config.name, config.config)
 
         @self.app.get("/get_config/")
         async def get_config(name: Literal["extractor", "plotter"]) -> ConfigModel:
-            return ConfigModel(name=name, config=self._config_builder.load_config_from_db(name))
+            return ConfigModel(
+                name=name,
+                config=self._config_builder.load_config_from_db(name)
+            )
 
         @self.app.get("/get_all_configs")
         async def get_all_configs() -> List[ConfigModel]:
             configs = self._config_builder.load_all_configs_from_db()
             return [ConfigModel(name=name, config=config) for name, config in configs.items()]
 
-        @self.app.get("/get_custom_all_agents")
-        async def get_all_custom_agents() -> List[str]:
-            return []
+        @self.app.post("/delete_config")
+        async def delete_config(name: Literal["extractor", "plotter"]) -> bool:
+            self._config_builder.delete_config_from_db(name)
 
         @self.app.get("/update_agents/")
         async def update_agents() -> bool:
