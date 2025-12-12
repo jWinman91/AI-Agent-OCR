@@ -8,3 +8,4 @@ pillow
 matplotlib
 streamlit
 st_pages
+pyyaml
