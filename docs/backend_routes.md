@@ -23,6 +23,40 @@
     - name  of config: str
   - Return: bool (success of deletion)
 
+## File-managing routes:
+- `/uploadpdf(file: UploadFile, resize: Literal["original", "medium", "small"]) -> bool`:
+  - Purpose: Upload PDF file (only one pdf allowed)
+  - Params:
+    - file: UploadFile
+    - resize: str for resizing each page of the pdf (Form(...))
+  - Return: bool (success of upload)
+- `/uploadimages(files: List[UploadFile], resize: Literal["original", "medium", "small"]) -> bool`:
+  - Purpose: Upload images (list of png, jpg, etc. allowed)
+  - Params:
+    - files: List[UploadFile]
+    - resize: str for resizing each image (Form(...))
+  - Return: bool (success of upload)
+- `/uploaddatafile(file: UploadFile) -> bool`:
+  - Purpose: Upload data file (only one csv or xlsx allowed)
+  - Params:
+    - file: UploadFile
+  - Result: bool (success of upload)
+- `/set_extern_data_source(data_source_name: Literal[...]) -> bool`:
+  - Purpose: Set external data source for the AI to draw data from (e.g., yfinance, ...)
+  - Params:
+    - data_source_name: limited number of data sources
+  - Return: bool (success of setting the data source)
+- `/download_plot(plot_path: str) -> FileResponse`:
+  - Purpose: Download plot by filename
+  - Params:
+    - plot_path: str
+  - Return: FileResponse
+- `/download_data(data_file_path: str) -> FileResponse`:
+  - Purpose: Download data file by filename
+  - Params:
+    - data_file_path: str
+  - Return: FileResponse
+
 ## Agent-related routes:
 - `/update_all_agent() -> bool`:
   - Purpose: Recreates all agents with the current configuration from the DB
@@ -48,35 +82,3 @@
     - tool_used: str | None
     - code_summary: str | None
     - error: str | None
-
-## File-managing routes:
-- `/uploadpdf(file: UploadFile) -> bool`:
-  - Purpose: Upload PDF file (only one pdf allowed)
-  - Params:
-    - file: UploadFile
-  - Return: bool (success of upload)
-- `/uploadimages(files: List[UploadFile]) -> bool`:
-  - Purpose: Upload images (list of png, jpg, etc. allowed)
-  - Params:
-    - files: List[UploadFile]
-  - Return: bool (success of upload)
-- `/uploaddatafile(file: UploadFile) -> bool`:
-  - Purpose: Upload data file (only one csv or xlsx allowed)
-  - Params:
-    - file: UploadFile
-  - Result: bool (success of upload)
-- `/set_extern_data_source(data_source_name: Literal[...]) -> bool`:
-  - Purpose: Set external data source for the AI to draw data from (e.g., yfinance, ...)
-  - Params:
-    - data_source_name: limited number of data sources
-  - Return: bool (success of setting the data source)
-- `/download_plot(plot_path: str) -> FileResponse`:
-  - Purpose: Download plot by filename
-  - Params:
-    - plot_path: str
-  - Return: FileResponse
-- `/download_data(data_file_path: str) -> FileResponse`:
-  - Purpose: Download data file by filename
-  - Params:
-    - data_file_path: str
-  - Return: FileResponse
