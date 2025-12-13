@@ -1,71 +1,111 @@
-import uvicorn, os, yaml, subprocess
-import pandas as pd
-
-from fastapi import FastAPI, UploadFile, Form, HTTPException
-from fastapi.responses import FileResponse
+import os
+import subprocess
 from typing import List, Literal
-from loguru import logger
 
-from src.agents_creator import AgentCreator
+import pandas as pd
+import uvicorn
+from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from loguru import logger
+from src.agents_runner import AgentRunner
 from src.config_builder import ConfigBuilder
-from src.utils.data_models import OrchestratorOutput, ConfigModel, AgentResult, ConfigModelDB
+from src.file_manager import FileManager
+from src.utils.data_models import (
+    AgentResult,
+    ConfigModelUser,
+)
 
 
 class AiAgentOcrApp:
-    def __init__(self,
-                 ip: str = "127.0.0.1",
-                 port: int = 8000,
-                 data_dir: str = "data",
-                 output_dir: str = "plots",
-                 image_dir: str = "images",
-                 agent_config_path: str = "configs/agents.yaml") -> None:
+    def __init__(
+        self,
+        ip: str = "127.0.0.1",
+        port: int = 8000,
+        data_dir: str = "data",
+        output_dir: str = "plots",
+        image_dir: str = "images",
+        agent_config_path: str = "configs/agents.yaml",
+    ) -> None:
         """
         Initializes the PlotAgentApp with the given parameters.
 
-        :param ip:
-        :param port:
-        :param output_dir:
-        :param agent_config_path:
+        :param ip: IP address to bind the server
+        :param port: Port to bind the server
+        :param data_dir: Directory to store data files
+        :param output_dir: Directory to store output plots
+        :param agent_config_path: Path to the agent configuration file
         """
-        self._ip = ip
-        self._port = port
-        self._data_dir = data_dir
-        self._output_dir = output_dir
+        self.IP = ip
+        self.PORT = port
+        self._image_urls = []
         self._data_file_path = ""
 
-        self._config_builder = ConfigBuilder(agent_config_path)
-        self._ai_ocr_agents = AgentCreator(
-            self._config_builder.build_config(),
-            data_dir=data_dir,
-            output_dir=output_dir
+        self.CONFIG_BUILDER = ConfigBuilder(agent_config_path)
+        self.FILE_MANAGER = FileManager(
+            data_dir=data_dir, plot_dir=output_dir, image_dir=image_dir
         )
-
-        os.makedirs(image_dir, exist_ok=True)
-        self._image_urls = []
+        self.ai_agent_runner = AgentRunner(
+            config=self.CONFIG_BUILDER.build_config(),
+            data_dir=data_dir,
+            plots_dir=output_dir,
+        )
 
         self.app = FastAPI()
         self._register_routes()
 
-    def _register_routes(self):
+    def _register_routes(self) -> None:
         @self.app.post("/upload_config/")
-        async def upload_config(config: ConfigModel) -> bool | None:
-            return self._config_builder.update_config_in_db(config.name, config.config)
+        async def upload_config(
+            config_name: Literal["extractor", "plotter"], config: ConfigModelUser
+        ) -> bool | None:
+            """
+            Uploads a new configuration to the database.
+
+            :param config: Configuration model to upload
+            :return: True if successful
+            """
+            return self.CONFIG_BUILDER.update_config_in_db(config_name, config)
 
         @self.app.get("/get_config/")
-        async def get_config(name: Literal["extractor", "plotter"]) -> ConfigModel:
-            return ConfigModel(
-                name=name,
-                config=self._config_builder.load_config_from_db(name)
+        async def get_config(
+            config_name: Literal["extractor", "plotter"],
+        ) -> ConfigModelUser:
+            """
+            Retrieves a configuration from the database.
+
+            :param name: Name of the configuration to retrieve
+            :return: Configuration model
+            """
+            config_model_db = self.CONFIG_BUILDER.load_config_from_db(
+                config_name=config_name
             )
+            return ConfigModelUser(**config_model_db.model_dump())
 
         @self.app.get("/get_all_configs")
-        async def get_all_configs() -> List[ConfigModel]:
-            configs = self._config_builder.load_all_configs_from_db()
-            return [ConfigModel(name=name, config=config) for name, config in configs.items()]
+        async def get_all_configs() -> dict[str, ConfigModelUser]:
+            """
+            Retrieves all configurations from the database.
 
-        @self.app.post("/delete_config")
-        async def delete_config(name: Literal["extractor", "plotter"]) -> bool:
-            self._config_builder.delete_config_from_db(name)
+            :return: List of configuration models
+            """
+            configs = self.CONFIG_BUILDER.load_all_configs_from_db()
+            return {
+                name: ConfigModelUser(**config.model_dump())
+                for name, config in configs.items()
+                if name in ["extractor", "plotter"]
+            }
+
+        @self.app.post("/reset_config/")
+        async def reset_config(
+            config_name: Literal["extractor", "plotter"],
+        ) -> bool | None:
+            """
+            Resets a configuration in the database to its default state.
+
+            :param config_name: Name of the configuration to reset
+            :return: True if successful
+            """
+            return self.CONFIG_BUILDER.reset_config_db(config_name)
 
         @self.app.get("/update_agents/")
         async def update_agents() -> bool:
@@ -73,94 +113,148 @@ class AiAgentOcrApp:
             Recreates the agents with the current configuration.
             :return: True if successful
             """
-            self._ai_ocr_agents = AgentCreator(self._config_builder.build_config())
-            return True
-
-        @self.app.post("/uploadimages/")
-        async def upload_images(files: List[UploadFile]) -> bool:
-            subprocess.call(f"rm {self._output_dir}/*", shell=True)
-            subprocess.call(f"rm {self._data_dir}/*", shell=True)
-            self._image_urls = []
-            for file in files:
-                file_path = os.path.join("images", file.filename)
-                with open(file_path, "wb") as f:
-                    content = file.file.read()
-                    f.write(content)
-                logger.info(f"File saved at: {file_path}")
-                self._image_urls.append(file_path)
-            return True
-
-        @self.app.post("/uploaddatafile")
-        async def upload_datafile(file: UploadFile) -> bool:
-            if not file.filename.endswith((".csv", ".xlsx", ".xls")):
-                raise HTTPException(status_code=400, detail="Only CSV or Excel files are allowed")
-
-            subprocess.call(f"rm {self._data_dir}/*", shell=True)
-
-            self._data_file_path = os.path.join(self._data_dir, file.filename)
-            with open(self._data_file_path, "wb") as f:
-                content = file.file.read()
-                f.write(content)
+            self._ai_agent_runner = AgentRunner(
+                config=self._config_builder.build_config(),
+                data_dir=self.FILE_MANAGER.get_data_file_path(),
+                output_dir=self.FILE_MANAGER.get_output_dir(),
+            )
             return True
 
         @self.app.post("/run_single_agent")
-        async def run_single_agent(user_prompt: str = Form(...), agent_name: str = Form(...)) -> OrchestratorOutput:
+        async def run_single_agent(
+            user_prompt: str = Form(...),
+            agent_name: Literal["extractor", "plotter"] = Form(...),
+        ) -> AgentResult:
             if agent_name == "extractor":
+                # Get image URLs from the file manager
+                data_dir = self.FILE_MANAGER.get_data_dir()
                 if len(self._image_urls) == 0:
-                    raise ValueError(f"No images to analyse!")
+                    raise ValueError("Extractor agent requires images to process!")
 
-                previous_errors_extractor = {}
-                system_prompt_args_orchestrator = {"previous_errors_extractor": ""}
-                orchestrator_res = await self._ai_ocr_agents.run_orchestrator(user_prompt, system_prompt_args_orchestrator)
-                extractor_res = await self._ai_ocr_agents.run_extractor(self._image_urls, previous_errors_extractor,
-                                                                        orchestrator_res)
-
-                if type(extractor_res) is dict:
-                    logger.error(f"Error in extractor agent: {extractor_res}.")
-                    raise HTTPException(status_code=500, detail=f"Extractor failed to process image: {extractor_res}.")
-                else:
-                    df = extractor_res
-                    df_path = f"{self._data_dir}/extracted_data.csv"
-                    df.to_csv(df_path, index=False)
-                    return OrchestratorOutput(df_path=df_path, plot_path="", code_summary="", tool_used="")
-
-            elif agent_name == "plotter":
-                if self._data_file_path.endswith(".csv"):
-                    df = pd.read_csv(self._data_file_path)
-                else:
-                    df = pd.read_excel(self._data_file_path)
-                df_path = f"{self._output_dir}/extracted_data.csv"
-                df.to_csv(df_path, index=False)
-
-                system_prompt_args_plotter = {"data_path": df_path, "output_dir": self._output_dir}
-                previous_errors_plotter = {}
-                plot_res = await self._ai_ocr_agents.run_plotter(user_prompt, previous_errors_plotter,
-                                                                 system_prompt_args_plotter)
-                if type(plot_res) is not AgentResult:
-                    logger.error(f"Error in plotter agent: {plot_res}.")
-                    raise HTTPException(status_code=500, detail=f"Plotter failed to plot data: {plot_res}.")
-                else:
-                    return OrchestratorOutput(
-                        plot_path=plot_res.body.plot_path,
-                        tool_used=plot_res.body.tool_used,
-                        code_summary=plot_res.body.code_summary,
-                        df_path=df_path
+                # Run the extractor agent and catch ValueErrors from the LLMs
+                try:
+                    df, _ = self.ai_agent_runner.run_extractor(
+                        user_prompt=user_prompt,
+                        image_urls=self._image_urls,
+                        previous_errors_extractor={},
+                        previous_errors_plotter={},
                     )
+                except ValueError as e:
+                    logger.error(f"Error in extractor: {e}")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Extractor agent failed to process your input: {e}",
+                    )
+
+                df_path = f"{data_dir}/extracted_data.csv"
+                df.to_csv(df_path, index=False)
+                return AgentResult(
+                    data_file_path=df_path,
+                    plot_path="",
+                    code_summary="",
+                    tool_used="",
+                )
+            elif agent_name == "plotter":
+                # Get data file path from the file manager
+                output_dir = self.FILE_MANAGER.get_output_dir()
+
+                # Run the plotter agent and catch ValueErrors from the LLMs
+                try:
+                    plot_res = self.ai_agent_runner.run_plotter(
+                        user_prompt=user_prompt,
+                        system_prompt_args={
+                            "data_file_path": self._df_file_path,
+                            "output_dir": output_dir,
+                        },
+                    )
+                    if plot_res.error_message and plot_res.error_message != "":
+                        logger.error(f"Error in plotter: {plot_res.error_message}")
+                        raise ValueError(plot_res.error_message)
+
+                except ValueError as e:
+                    logger.error(f"Error in plotter: {e}")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Plotter agent failed to process your input: {e}",
+                    )
+
+                return AgentResult(
+                    data_file_path="",
+                    plot_path=plot_res.plot_path,
+                    code_summary=plot_res.code_summary,
+                    tool_used=plot_res.tool_used,
+                )
+
             else:
-                raise ValueError(f"Invalid agent {agent_name}. Agent must be one of {['extractor', 'plotter']}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid agent {agent_name}."
+                        f"Agent must be eihter 'extractor' or 'plotter'",
+                    ),
+                )
 
         @self.app.post("/run_agents")
-        async def run_agents(user_prompt: str = Form(...)) -> OrchestratorOutput:
+        async def run_ai_ocr_agents(user_prompt: str = Form(...)) -> AgentResult:
             """
             Endpoint to run the agents.
             :param user_prompt: User prompt to process
             :return: Dictionary with the plot path
             """
             try:
-                return await self._ai_ocr_agents.run_logic(user_prompt, image_urls=self._image_urls)
+                return await self.ai_agent_runner.run_ai_ocr_agents(
+                    user_prompt=user_prompt, image_urls=self._image_urls
+                )
             except ValueError as e:
                 logger.error(f"Error in run_agents: {e}")
-                raise HTTPException(status_code=422, detail=f"Your input could not be processed by the agents: {e}")
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Your input could not be processed by the agents: {e}",
+                )
+
+        @self.app.post("/uploadimages/")
+        async def upload_images(
+            files: List[UploadFile],
+            resize: Literal["original", "medium", "small"] = Form(default="medium"),
+        ) -> bool:
+            """
+            Endpoint to upload images.
+            :param files: List of image files to upload
+            :return: True if successful
+            """
+            if not all(
+                file.filename.endswith((".png", ".jpg", ".jpeg")) for file in files
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only image files with extensions png, jpg, jpeg are allowed",
+                )
+
+            if resize == "medium":
+                files = self.FILE_MANAGER.resize_images(
+                    files,
+                    max_width=800,
+                    max_height=800,
+                )
+            elif resize == "small":
+                files = self.FILE_MANAGER.resize_images(
+                    files,
+                    max_width=400,
+                    max_height=400,
+                )
+
+            self._image_urls = self.FILE_MANAGER.upload_images(files)
+            return True
+
+        @self.app.post("/uploaddatafile")
+        async def upload_datafile(file: UploadFile) -> bool:
+            if not file.filename.endswith((".csv", ".xlsx", ".xls")):
+                raise HTTPException(
+                    status_code=400, detail="Only CSV or Excel files are allowed"
+                )
+
+            self._data_file_path = self.FILE_MANAGER.upload_data_file(file)
+            return True
 
         @self.app.get("/plot_path/{plot_path:path}/download_plot")
         async def download_plot(plot_path: str) -> FileResponse:
@@ -169,8 +263,13 @@ class AiAgentOcrApp:
             :param plot_path: Name of the file to download
             :return: FileResponse with the requested file
             """
+            plot_path = os.path.join(self.FILE_MANAGER.get_output_dir(), plot_path)
             if os.path.exists(plot_path):
-                return FileResponse(plot_path, media_type='image/png', filename=os.path.basename(plot_path))
+                return FileResponse(
+                    plot_path,
+                    media_type="image/png",
+                    filename=os.path.basename(plot_path),
+                )
             else:
                 raise FileNotFoundError(f"File {plot_path} not found")
 
@@ -181,8 +280,11 @@ class AiAgentOcrApp:
             :param df_path: Name of the file to download
             :return: FileResponse with the requested file
             """
+            df_path = os.path.join(self.FILE_MANAGER.get_data_dir(), df_path)
             if os.path.exists(df_path):
-                return FileResponse(df_path, media_type='csv', filename=os.path.basename(df_path))
+                return FileResponse(
+                    df_path, media_type="csv", filename=os.path.basename(df_path)
+                )
             else:
                 raise FileNotFoundError(f"File {df_path} not found")
 
@@ -191,7 +293,7 @@ class AiAgentOcrApp:
         Run the api
         :return: None
         """
-        uvicorn.run(self.app, host=self._ip, port=self._port)
+        uvicorn.run(self.app, host=self.IP, port=self.PORT)
 
 
 if __name__ == "__main__":

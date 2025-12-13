@@ -11,12 +11,15 @@ mcp_server = FastMCP("Plot")
 OUTPUT_DIR = "plots"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+
 class CodeRequest(BaseModel):
     file_path: str
     code: str
 
+
 class InstallRequest(BaseModel):
     library_name: str
+
 
 # Route 1: Execute Python Code
 @mcp_server.tool()
@@ -27,13 +30,18 @@ def plot_python(req: CodeRequest) -> dict:
     :param req: CodeRequest object containing the file path and Python code to execute.
     :return: Dictionary with the path to the generated plot or an error message.
     """
-    df = pd.read_csv(req.file_path) if req.file_path.endswith(".csv") else pd.read_excel(req.file_path)
+    df = (
+        pd.read_csv(req.file_path)
+        if req.file_path.endswith(".csv")
+        else pd.read_excel(req.file_path)
+    )
     context = {"df": df, "plt": plt, "plot_path": ""}
     try:
         exec(req.code, context)
         return {"plot_path": context["plot_path"]}
     except Exception as e:
         return {"error": str(e)}
+
 
 @mcp_server.tool()
 def get_df_infos_python(req: CodeRequest) -> dict:
@@ -44,7 +52,11 @@ def get_df_infos_python(req: CodeRequest) -> dict:
     :param req: CodeRequest object containing the code to be executed and the file path.
     :return: Dictionary metadata about the DataFrame, including the first few rows.
     """
-    df = pd.read_csv(req.file_path) if req.file_path.endswith(".csv") else pd.read_excel(req.file_path)
+    df = (
+        pd.read_csv(req.file_path)
+        if req.file_path.endswith(".csv")
+        else pd.read_excel(req.file_path)
+    )
     try:
         context = {"df": df, "res": {}}
         exec(req.code, context)
@@ -53,6 +65,7 @@ def get_df_infos_python(req: CodeRequest) -> dict:
         return res
     except Exception as e:
         return {"error": str(e)}
+
 
 # Route 2: Execute R Code via rpy2
 @mcp_server.tool()
@@ -65,14 +78,17 @@ def plot_r(req: CodeRequest) -> dict:
     """
     try:
         if req.file_path.endswith(".csv"):
-            robjects.r(f"""data <- read.csv('{req.file_path.replace('\\', '/')}')""")
+            robjects.r(f"""data <- read.csv('{req.file_path.replace("\\", "/")}')""")
         else:
-            robjects.r(f"""data <- readxl::read_excel('{req.file_path.replace('\\', '/')}')""")
+            robjects.r(
+                f"""data <- readxl::read_excel('{req.file_path.replace("\\", "/")}')"""
+            )
 
         plot_path = robjects.r(req.code)[0]
         return {"plot_path": plot_path}
     except Exception as e:
         return {"error": str(e)}
+
 
 @mcp_server.tool()
 def install_python_library(library_name: str) -> dict:
@@ -83,15 +99,19 @@ def install_python_library(library_name: str) -> dict:
     :return: Dictionary with success or error message.
     """
     import subprocess
+
     try:
         subprocess.check_call(["pip", "install", library_name])
         return {"message": f"Successfully installed {library_name}"}
     except subprocess.CalledProcessError as e:
         return {"error": str(e)}
 
+
 @mcp_server.tool()
-#@mcp_server.tool()
-def install_r_library(library_name: str, repo: str = "http://cran.us.r-project.org") -> dict:
+# @mcp_server.tool()
+def install_r_library(
+    library_name: str, repo: str = "http://cran.us.r-project.org"
+) -> dict:
     """
     Ensures an R library is installed. Installs it from the given repo if missing.
 
@@ -110,9 +130,9 @@ def install_r_library(library_name: str, repo: str = "http://cran.us.r-project.o
             # Prevent interactive prompts
             ro.r("options(ask=FALSE)")
             # Install from CRAN
-            utils.install_packages(StrVector([library_name]),
-                                   repos=repo,
-                                   dependencies=True)
+            utils.install_packages(
+                StrVector([library_name]), repos=repo, dependencies=True
+            )
             return {"message": f"Installed {library_name} from {repo}"}
         else:
             return {"message": f"{library_name} is already installed"}

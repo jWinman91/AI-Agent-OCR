@@ -1,110 +1,80 @@
-import os, datetime, time, importlib
+import datetime
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Tuple
 
 import pandas
 import pandas as pd
-from pathlib import Path
-
 from loguru import logger
+from PIL import Image
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
-from PIL import Image
-from typing import List, Dict, Any, Literal
+from src.utils.data_models import (
+    AgentResponse,
+    AgentResult,
+    ConfigModelBuild,
+    ExtractorPrompt,
+    ExtractorResponse,
+    OrchestratorResponse,
+    PlotterResponse,
+)
+from src.utils.output_validator import OutputValidator
 
-from src.utils.data_models import (OrchestratorOutput,
-                                   PlotterResult,
-                                   OrchestratorResult,
-                                   ExtractorResult,
-                                   AgentResult,
-                                   ExtractorPrompt,
-                                   PlotterResultOutput)
-from src.output_validator import OutputValidator
-
-import logging
 logging.basicConfig(level=logging.INFO)
 
 
-class AgentCreator:
-    def __init__(self,
-                 config: Dict[str, Dict[str, Any]],
-                 data_dir: str = "data",
-                 output_dir: str = "plots") -> None:
-        self.config = config
+class AgentRunner:
+    def __init__(
+        self,
+        config: Dict[str, ConfigModelBuild],
+        data_dir: str = "data",
+        plots_dir: str = "plots",
+    ) -> None:
+        # Create directories for data and plots if they don't exist
+        self.DATA_DIR = data_dir
+        self.PLOTS_DIR = plots_dir
 
-        self.agent_outputs = {}
-        self._agent_names = []
-        for agent_name, agent_config in config:
-            self._agent_names.append(agent_name)
-            exec(f"self.agent_outputs['{agent_name}'] = {"".join(map(
-                lambda x: x.capitalize(), agent_name.split("_")))}Result")
-            exec(f"self.{agent_name} = self._create_agent(name)")
+        # Save config
+        self.CONFIG = config
+        self.AGENT_NAMES = list(config.keys())
 
-        extractor_example = ExtractorResult(
-            data={"": "corrected dictionary of extracted data"},
-            error="null or error message"
+        # Initialize output validator
+        self.OUTPUT_VALIDATOR = OutputValidator(
+            create_agent_func=self.create_agent,
+            run_agent_func=self.run_agent,
         )
-        extractor_prompt_example = ExtractorPrompt(
-            user_prompt="string",
-            json_details={"column1": "string", "column2": "integer"}
-        )
-        orchestrator_example = OrchestratorResult(
-            extractor_prompt=extractor_prompt_example,
-            plot_prompt="str",
-            error="null or error message"
-        )
-        plotter_output_example = PlotterResultOutput(
-            plot_path="string",
-            tool_used="string",
-            code_summary="string"
-        )
-        plotter_example = PlotterResult(
-            body=plotter_output_example,
-            error="null or error message"
-        )
-
-        self._agent_output_examples = {
-            "extractor": extractor_example,
-            "orchestrator": orchestrator_example,
-            "plotter": plotter_example
-        }
-
-        self._output_validator = OutputValidator(
-            self._agent_names,
-            self._agent_output_examples,
-            self.agent_outputs
-        )
-
-        self._data_dir = data_dir
-        os.makedirs(data_dir, exist_ok=True)
-        self._output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
-
 
     @staticmethod
-    def fill_system_prompt(cfg: Dict[str, Any],args: Dict[str, Any] | None = None) -> Dict[str, Any]:
-        cfg = cfg.copy()
-        if args:
-            cfg["system_prompt"] = cfg["system_prompt"].format(**args)
-            return cfg
-        return cfg
+    def _fill_system_prompt(
+        system_prompt: str, args: Dict[str, Any] | None = None
+    ) -> str:
+        if args is None:
+            return system_prompt
+        return system_prompt.format(**args)
 
     @staticmethod
-    def error_handling_prompt(agent_name: Literal["extractor", "orchestrator", "plotter"],
-                              error_message: str,
-                              user_prompt: str,
-                              previous_errors: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _error_handling_prompt(
+        agent_name: Literal["extractor", "orchestrator", "plotter"],
+        error_message: str,
+        user_prompt: str,
+        previous_errors: Dict[str, str] | None = None,
+    ) -> Dict[str, str]:
         if previous_errors is None:
             previous_errors = {user_prompt: error_message}
         else:
             previous_errors[user_prompt] += error_message
 
         if len(previous_errors) > 3:
-            raise ValueError(f"Too many errors in {agent_name}: {previous_errors}. Stopping execution.")
+            raise ValueError(
+                f"Too many errors in {agent_name}: {previous_errors}."
+                f"Stopping execution."
+            )
         return previous_errors
 
     @staticmethod
-    def get_image_timestamp(image_url: str) -> datetime.datetime:
+    def _get_image_timestamp(image_url: str) -> datetime.datetime:
         """
         Load in data and get the timestamp from the image metadata.
         :param image_url:
@@ -115,143 +85,295 @@ class AgentCreator:
             if exif is not None and 36867 in list(exif.keys()):
                 return datetime.datetime.strptime(exif[36867], "%Y:%m:%d %H:%M:%S")
 
-        return datetime.datetime.strptime(datetime.datetime.now().strftime("%Y:%m:%d %H:%M:%S"),
-                                          "%Y:%m:%d %H:%M:%S")
+        return datetime.datetime.strptime(
+            datetime.datetime.now().strftime("%Y:%m:%d %H:%M:%S"), "%Y:%m:%d %H:%M:%S"
+        )
 
     @staticmethod
-    def build_error_messages(previous_errors: Dict[str, Any] | None) -> str:
+    def _build_error_messages(previous_errors: Dict[str, str] | None) -> str:
         if not previous_errors:
             return ""
-        return "\n".join([f"- User Prompt: {k}\nError: {v}" for k, v in previous_errors.items()])
+        return "\n".join(
+            [f"- User Prompt: {k}\nError: {v}" for k, v in previous_errors.items()]
+        )
 
-    def _create_agent(self, agent_name: str, system_prompt_args: Dict[str, Any] | None = None) -> Agent:
-        if agent_name not in self._agent_names:
-            raise ValueError(f"Invalid agent {agent_name}. Agent must be one of {self._agent_names}")
+    def create_agent(
+        self,
+        agent_name: str,
+        config: ConfigModelBuild,
+        output_type: type[AgentResponse],
+        system_prompt_args: Dict[str, Any] | None = None,
+    ) -> Agent:
+        if agent_name not in self.AGENT_NAMES:
+            raise ValueError(
+                f"Invalid agent {agent_name}. Agent must be one of {self.AGENT_NAMES}"
+            )
 
-        # set agent_cls by default to Agent
-        # (we might overwrite it later with a custom agent)
-        agent_cls = Agent
+        cfg = config.model_dump()
+        cfg["system_prompt"] = self._fill_system_prompt(
+            config.system_prompt, system_prompt_args
+        )
 
-        # process configuration
-        cfg = self.fill_system_prompt(self.config.get(agent_name, {}), system_prompt_args)
+        # set base url if given in config and delete it from cfg
+        base_url = cfg.pop("base_url", "http://localhost:11434/v1")
+
         # set output type if given in config
-        if cfg.pop("output_type", None):
-            cfg["output_type"] = self.agent_outputs[agent_name]
+        if cfg.pop("output_type", False):
+            cfg["output_type"] = output_type
+
         # initiate model with model provider if ollama should be used
         if cfg.pop("model_provider", None) == "ollama":
             cfg["model"] = OpenAIChatModel(
-                model_name=cfg.pop("model", "gpt-oss:20b"),
-                provider=OllamaProvider(base_url=cfg.pop("base_url", "http://localhost:11434/v1"))
+                model_name=cfg["model"],
+                provider=OllamaProvider(base_url=base_url),
             )
+
         # set MCP server if necessary
-        if "mcp_server" in cfg:
+        if cfg.pop("mcp_server", None):
             mcp_server = MCPServerStdio(**cfg["mcp_server"])
             cfg["toolsets"] = [mcp_server]
-            cfg.pop("mcp_server")
-        # set custom model
-        if custom := cfg.get("custom", {}):
-            module = importlib.import_module(custom.get("module_name"))
-            agent_cls = getattr(module, custom.get("class_name"))
 
-        return agent_cls(**cfg)
+        return Agent(**cfg)
 
-    async def run_agent(self, agent_name: str, **kwargs) -> AgentResult:
-        agent = getattr(self, agent_name)
-        if agent_name == "extractor":
-            agent_input = [
-                kwargs["user_prompt"],
-                BinaryContent(data=Path(kwargs["image_url"]).read_bytes(), media_type="image/png")
-            ]
+    async def run_agent(
+        self,
+        agent: Agent,
+        output_type_example: AgentResponse,
+        user_prompt: str,
+        image_url: str | None = None,
+    ) -> AgentResponse:
+        """
+        Runs an agent with the given user prompt and optional image.
+
+        :param agent: The agent to run.
+        :param user_prompt: The user prompt to provide to the agent.
+        :param image_url: Optional path to an image file to provide to the agent.
+        :return: The agent's response, validated explicitly if it's a string output.
+        """
+        if image_url is not None:
+            with open(image_url, "rb") as f:
+                file_content = f.read()
+            binary_content = BinaryContent(
+                filename=Path(image_url).name,
+                content=file_content,
+                mime_type="image/png",
+            )
+            response = await agent.run(user_prompt=user_prompt, file=binary_content)
         else:
-            agent_input = kwargs["user_prompt"]
+            response = await agent.run(user_prompt=user_prompt)
 
-        t0 = time.time()
-        agent_response = await agent.run(agent_input)
-        logger.info(f"Time taken for {agent_name}: {time.time() - t0:.2f} seconds")
-        print(agent_response.output)
-        if type(agent_response.output) != str:
-            return agent_response.output
-        return await self._output_validator.validate_output(agent_response.output, agent_name, self.run_agent)
+        if type(response.output) is str:
+            return await self.OUTPUT_VALIDATOR.validate_output(
+                response.output, agent.name if agent.name else "", output_type_example
+            )
+        else:
+            return response
 
-    async def run_orchestrator(self, user_prompt: str, system_prompt_args: dict | None = None) -> OrchestratorResult:
-        # Orchestrator decides how to extract and plot based on user prompt and previous errors
-        self.orchestrator = self._create_agent("orchestrator", system_prompt_args)
-        orchestrator_res = await self.run_agent("orchestrator", user_prompt=user_prompt)
-        if orchestrator_res.error and orchestrator_res.error != "":
-            logger.error(f"Error in orchestrator: {orchestrator_res.error}")
-            raise ValueError(f"Error in orchestrator: {orchestrator_res.error}")
+    async def run_orchestrator(
+        self, user_prompt: str, system_prompt_args: dict[str, Any] | None = None
+    ) -> OrchestratorResponse:
+        """
+        Runs the orchestrator agent to determine extraction and plotting instructions.
+
+        :param user_prompt: The user prompt to provide to the orchestrator.
+        :param system_prompt_args: Optional arguments to format the system prompt.
+        :return: The orchestrator's response containing extraction and plotting
+        instructions.
+        """
+        # Orchestrator decides how to extract and plot
+        # based on user prompt and previous error
+        orchestrator = self.create_agent(
+            agent_name="orchestrator",
+            config=self.CONFIG["orchestrator"],
+            system_prompt_args=system_prompt_args,
+            output_type=OrchestratorResponse,
+        )
+        orchestrator_res = await self.run_agent(
+            agent=orchestrator,
+            user_prompt=user_prompt,
+            output_type_example=OrchestratorResponse(
+                plot_prompt="str",
+                extractor_prompt=ExtractorPrompt(
+                    user_prompt="str",
+                    json_details={"field_name": "str", "data_type": "str"},
+                ),
+                error_message="null or error message",
+            ),
+        )
+
+        if orchestrator_res.error_message and orchestrator_res.error_message != "":
+            logger.error(f"Error in orchestrator: {orchestrator_res.error_message}")
+            raise ValueError(f"Error in orchestrator: {orchestrator_res.error_message}")
 
         logger.info(f"orchestrator: {orchestrator_res}")
 
         return orchestrator_res
 
-    async def run_extractor(self, image_urls: List[str], previous_errors_extractor: dict,
-                            orchestrator_res: OrchestratorResult) -> pandas.DataFrame | dict:
-        # Extractor extracts data from each image based on orchestrator's instructions
-        system_prompt_args_extractor = {"json_details": orchestrator_res.extractor_prompt.json_details}
-        user_prompt_extractor = orchestrator_res.extractor_prompt.user_prompt
-        self.extractor = self._create_agent("extractor", system_prompt_args_extractor)
+    async def run_extractor(
+        self,
+        user_prompt: str,
+        image_urls: List[str],
+        previous_errors_extractor: dict[str, str] | None = None,
+        previous_errors_plotter: dict[str, str] | None = None,
+    ) -> Tuple[pandas.DataFrame, str]:
+        """
+        Runs the extractor agent on a list of image URLs.
 
+        :param user_prompt: The user prompt to provide to the extractor.
+        :param image_urls: List of image URLs to process.
+        :param previous_errors_extractor: Previous errors from the extractor agent.
+        :param previous_errors_plotter: Previous errors from the plotter agent.
+        :return: A tuple containing the extracted data as a DataFrame and the plot prompt.
+        """
+        system_prompt_args_orchestrator = {
+            "previous_errors_extractor": self._build_error_messages(
+                previous_errors_extractor
+            ),
+            "previous_errors_plotter": self._build_error_messages(
+                previous_errors_plotter
+            ),
+        }
+
+        # Run the orchestrator to get extraction instructions
+        orchestrator_res = await self.run_orchestrator(
+            user_prompt, system_prompt_args_orchestrator
+        )
+
+        # Create extractor agent based on orchestrator's instructions
+        extractor = self.create_agent(
+            "extractor",
+            self.CONFIG["extractor"],
+            ExtractorResponse,
+            {"json_details": orchestrator_res.extractor_prompt.json_details},
+        )
+
+        # Run extractor for each image
+        user_prompt_extractor = orchestrator_res.extractor_prompt.user_prompt
         df = pd.DataFrame()
         timestamps = []
         for image_url in image_urls:
-            extractor_res = await self.run_agent("extractor",
-                                                 user_prompt=user_prompt_extractor,
-                                                 image_url=image_url)
+            extractor_res = await self.run_agent(
+                agent=extractor,
+                user_prompt=user_prompt_extractor,
+                image_url=image_url,
+                output_type_example=ExtractorResponse(
+                    data={"field_name": "value"},
+                    error_message="null or error message",
+                ),
+            )
 
-            logger.info(f"extractor for image {image_url}: " f"{extractor_res}")
-            if extractor_res.error:
-                logger.error(f"Error in extractor for image {image_url}: {extractor_res.error}")
-                previous_errors_extractor = self.error_handling_prompt(
-                    "extractor", extractor_res.error, user_prompt_extractor, previous_errors_extractor
+            logger.info(f"extractor for image {image_url}: {extractor_res}")
+
+            # Retry if error in extractor
+            if extractor_res.error_message and extractor_res.error_message != "":
+                logger.error(
+                    f"Error in extractor for image {image_url}:"
+                    f"{extractor_res.error_message}"
                 )
-                return previous_errors_extractor
-            timestamps.append(self.get_image_timestamp(image_url))
+                previous_errors_extractor = self._error_handling_prompt(
+                    agent_name="extractor",
+                    error_message=extractor_res.error_message,
+                    user_prompt=user_prompt_extractor,
+                    previous_errors=previous_errors_extractor,
+                )
+                return await self.run_extractor(
+                    user_prompt=user_prompt,
+                    image_urls=image_urls,
+                    previous_errors_extractor=previous_errors_extractor,
+                    previous_errors_plotter=previous_errors_plotter,
+                )
+
+            timestamps.append(self._get_image_timestamp(image_url))
 
             df = pd.concat([df, pd.DataFrame([extractor_res.data])], ignore_index=True)
-
         df["timestamp"] = timestamps
 
-    async def run_plotter(self, user_prompt: str, previous_errors_plotter: dict, system_prompt_args: dict) \
-            -> PlotterResult | dict:
-        self.plotter = self._create_agent("plotter", system_prompt_args)
-        plot_res = await self.run_agent("plotter", user_prompt=user_prompt)
+        return df, orchestrator_res.plot_prompt
 
-        if plot_res.error is not None:
-            logger.error(f"Error in plotter: {plot_res.error}")
-            return self.error_handling_prompt(
-                "plotter", plot_res.error, user_prompt, previous_errors_plotter
-            )
-        return plot_res
+    async def run_plotter(
+        self,
+        user_prompt: str,
+        system_prompt_args: dict,
+    ) -> PlotterResponse:
+        """
+        Runs the plotter agent to generate plots based on extracted data.
 
-    async def run_logic(self, user_prompt: str, image_urls: List[str],
-                        previous_errors_extractor: Dict[str, Any] | None = None,
-                        previous_errors_plotter: Dict[str, Any] | None = None) -> OrchestratorOutput:
-        # Build error messages if any of previous errors exist
-        system_prompt_args_orchestrator = {
-            "previous_errors_extractor": self.build_error_messages(previous_errors_extractor),
-            "previous_errors_plotter": self.build_error_messages(previous_errors_plotter)
-        }
-        orchestrator_res = await self.run_orchestrator(user_prompt, system_prompt_args_orchestrator)
-        extractor_res = await self.run_extractor(image_urls, previous_errors_extractor, orchestrator_res)
+        :param user_prompt: The user prompt to provide to the plotter.
+        :param previous_errors_plotter: Previous errors from the plotter agent.
+        :param system_prompt_args: Additional arguments for the system prompt.
+        :return: The plotter's response containing plot details.
+        """
+        # Create plotter agent based on orchestrator's instructions
+        plotter = self.create_agent(
+            agent_name="plotter",
+            config=self.CONFIG["plotter"],
+            output_type=PlotterResponse,
+            system_prompt_args=system_prompt_args,
+        )
+        return await self.run_agent(
+            agent=plotter,
+            user_prompt=user_prompt,
+            output_type_example=PlotterResponse(
+                plot_path="str",
+                tool_used="str",
+                code_summary="str",
+                error_message="null or error message",
+            ),
+        )
 
-        if type(extractor_res) is dict:
-            return await self.run_logic(user_prompt, image_urls, extractor_res, previous_errors_plotter)
-        else:
-            df = extractor_res
-            df_path = f"{self._data_dir}/extracted_data.csv"
-            df.to_csv(df_path, index=False)
+    async def run_ai_ocr_agents(
+        self,
+        user_prompt: str,
+        image_urls: List[str],
+        previous_errors_extractor: Dict[str, Any] | None = None,
+        previous_errors_plotter: Dict[str, Any] | None = None,
+    ) -> AgentResult:
+        """
+        Runs the full AI OCR pipeline: extractor and plotter agents.
+
+        :param user_prompt: The user prompt to provide to the agents.
+        :param image_urls: List of image URLs to process.
+        :param previous_errors_extractor: Previous errors from the extractor agent.
+        :param previous_errors_plotter: Previous errors from the plotter agent.
+        :return: The final result containing plot and data details.
+        """
+        df, plot_prompt = self.run_extractor(
+            user_prompt=user_prompt,
+            image_urls=image_urls,
+            previous_errors_extractor=previous_errors_extractor,
+            previous_errors_plotter=previous_errors_plotter,
+        )
+        df_path = f"{self.DATA_DIR}/extracted_data_from_ai_ocr_agents.csv"
+        df.to_csv(df_path, index=False)
 
         # Plotter generates plot based on orchestrator's instructions and extracted data
-        system_prompt_args_plotter = {"data_path": df_path, "output_dir": self._output_dir}
-        plot_res = await self.run_plotter(orchestrator_res.plot_prompt, previous_errors_plotter,
-                                          system_prompt_args_plotter)
-        if type(plot_res) is not ExtractorResult:
-            return await self.run_logic(user_prompt, image_urls, previous_errors_extractor, plot_res)
+        system_prompt_args_plotter = {
+            "data_path": df_path,
+            "output_dir": self.PLOTS_DIR,
+        }
+        plot_res = await self.run_plotter(
+            plot_prompt,
+            system_prompt_args_plotter,
+        )
 
-        return OrchestratorOutput(
-            plot_path=plot_res.body.plot_path,
-            tool_used=plot_res.body.tool_used,
-            code_summary=plot_res.body.code_summary,
-            df_path=df_path
+        if plot_res.error_message and plot_res.error_message != "":
+            logger.error(f"Error in plotter: {plot_res.error_message}")
+            previous_errors_plotter = self._error_handling_prompt(
+                agent_name="plotter",
+                error_message=plot_res.error_message,
+                user_prompt=plot_prompt,
+                previous_errors=previous_errors_plotter,
+            )
+            return await self.run_ai_ocr_agents(
+                user_prompt=user_prompt,
+                image_urls=image_urls,
+                previous_errors_extractor=previous_errors_extractor,
+                previous_errors_plotter=previous_errors_plotter,
+            )
+
+        return AgentResult(
+            plot_path=plot_res.plot_path,
+            tool_used=plot_res.tool_used,
+            code_summary=plot_res.code_summary,
+            data_file_path=df_path,
         )
