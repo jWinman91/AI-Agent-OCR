@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Any, List
+
 
 class DBHandler(ABC):
-    def __init__(self, table_name: str):
+    def __init__(self, table_name: str) -> None:
         """
 
         :param table_name:
@@ -14,19 +15,21 @@ class DBHandler(ABC):
         pass
 
     @abstractmethod
-    def add_config(self, config_dict: dict, config_name: str) -> bool:
+    def add_config(self, config_dict: dict[str, Any], config_name: str) -> bool:
         pass
 
     @abstractmethod
-    def update_config(self, config_dict: dict, config_name: str) -> bool:
+    def update_config(
+        self, config_dict: dict[str, Any], config_name: str
+    ) -> bool | None:
         pass
 
     @abstractmethod
-    def delete_config(self, config_name) -> bool:
+    def delete_config(self, config_name: str) -> bool:
         pass
 
     @abstractmethod
-    def get_config(self, config_name) -> dict:
+    def get_config(self, config_name: str) -> dict[str, Any] | None:
         pass
 
     @abstractmethod
