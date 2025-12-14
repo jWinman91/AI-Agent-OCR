@@ -40,6 +40,7 @@ class OrchestratorResponse(BaseModel):
 
 
 class PlotterResponse(BaseModel):
+    df_file_path: str
     plot_path: str
     tool_used: str
     code_summary: str

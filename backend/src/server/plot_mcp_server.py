@@ -1,10 +1,11 @@
 # FastMCP Server with Python and R Plot Execution
-from pydantic import BaseModel
-from mcp.server.fastmcp import FastMCP
+import os
+
 import matplotlib.pyplot as plt
 import pandas as pd
-import os
 import rpy2.robjects as robjects
+from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 
 mcp_server = FastMCP("Plot")
 
@@ -23,22 +24,30 @@ class InstallRequest(BaseModel):
 
 # Route 1: Execute Python Code
 @mcp_server.tool()
-def plot_python(req: CodeRequest) -> dict:
+def run_python(req: CodeRequest) -> dict:
     """
-    Executes Python code to generate a plot from a CSV or Excel file.
+    Executes Python code to analyse from a dataframe (df) and/or generate a plot.
+    Numerical results from the analysis can be saved to a CSV file
+    under the `df_file_path`.
+    Plots can be generated using Matplotlib and
+    saved as PNG files under the `plot_path`.
 
     :param req: CodeRequest object containing the file path and Python code to execute.
-    :return: Dictionary with the path to the generated plot or an error message.
+    :return: Dictionary with the path to the generated plot and/or dataframe or
+    an error message.
     """
     df = (
         pd.read_csv(req.file_path)
         if req.file_path.endswith(".csv")
         else pd.read_excel(req.file_path)
     )
-    context = {"df": df, "plt": plt, "plot_path": ""}
+    context = {"df": df, "plt": plt, "plot_path": "", "df_file_path": ""}
     try:
         exec(req.code, context)
-        return {"plot_path": context["plot_path"]}
+        return {
+            "plot_path": context["plot_path"],
+            "df_file_path": context["df_file_path"],
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -69,7 +78,7 @@ def get_df_infos_python(req: CodeRequest) -> dict:
 
 # Route 2: Execute R Code via rpy2
 @mcp_server.tool()
-def plot_r(req: CodeRequest) -> dict:
+def run_r(req: CodeRequest) -> dict:
     """
     Executes R code to generate a plot from a CSV or Excel file.
 
@@ -121,7 +130,7 @@ def install_r_library(
     """
     try:
         import rpy2.robjects as ro
-        from rpy2.robjects.packages import isinstalled, importr
+        from rpy2.robjects.packages import importr, isinstalled
         from rpy2.robjects.vectors import StrVector
 
         utils = importr("utils")

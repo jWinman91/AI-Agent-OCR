@@ -179,7 +179,7 @@ class AiAgentOcrApp:
                     )
 
                 return AgentResult(
-                    data_file_path="",
+                    data_file_path=plot_res.df_file_path,
                     plot_path=plot_res.plot_path,
                     code_summary=plot_res.code_summary,
                     tool_used=plot_res.tool_used,

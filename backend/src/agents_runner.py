@@ -314,6 +314,7 @@ class AgentRunner:
             agent=plotter,
             user_prompt=user_prompt,
             output_type_example=PlotterResponse(
+                df_file_path="str",
                 plot_path="str",
                 tool_used="str",
                 code_summary="str",
