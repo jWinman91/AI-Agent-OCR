@@ -6,7 +6,13 @@ from typing import Any, Awaitable
 from loguru import logger
 from pydantic import ValidationError
 from pydantic_ai import Agent
-from src.utils.data_models import AgentResponse
+from src.utils.data_models import (
+    AgentResponse,
+    ExtractorResponse,
+    FixJsonResult,
+    OrchestratorResponse,
+    PlotterResponse,
+)
 
 
 class OutputValidator:
@@ -14,12 +20,13 @@ class OutputValidator:
         "Expected json format: {expected_json}."
         "Corrupted JSON that you need to fix: {text}"
     )
-    AGENT_NAME = "fix_json"
+    AGENT: object | None = None
 
     def __init__(
         self,
         create_agent_func: Callable[..., Agent],
         run_agent_func: Callable[..., Awaitable[AgentResponse]],
+        config: dict[str, Any],
     ) -> None:
         """
         Initializes the OutputValidator class.
@@ -28,7 +35,11 @@ class OutputValidator:
         :param run_agent_func: Function to run an agent asynchronously.
         """
 
-        self._create_agent_func = create_agent_func
+        self.AGENT = create_agent_func(
+            agent_name="fix_json",
+            config=config,
+            output_type=FixJsonResult,
+        )
         self._run_agent_func = run_agent_func
 
     async def parse_json(
@@ -52,7 +63,7 @@ class OutputValidator:
             )
             json_match = re.search(r"```json\s*[\s\S]*?```", text, re.DOTALL)
 
-            if json_match or "None" not in text:
+            if json_match and "None" not in text:
                 json_str = (
                     json_match.group(0)
                     .replace("```json", "")
@@ -66,13 +77,27 @@ class OutputValidator:
                 text=text,
             )
             fixed_json = await self._run_agent_func(
-                agent=self.AGENT_NAME,
+                agent=self.AGENT,
                 user_prompt=user_prompt,
-                output_type_example=AgentResponse(
-                    fixed_json="str",
-                    error_message="null or error message",
+                output_type_example=self.try_output_models(
+                    {
+                        "fixed_json": "str",
+                        "error_message": "null or error message",
+                    }
                 ),
             )
+            fixed_json = fixed_json.output
+            print(f"fixed_json: {fixed_json}")
+            if type(fixed_json) is not FixJsonResult and type(fixed_json) is str:
+                fixed_json = FixJsonResult(
+                    **await self.parse_json(
+                        fixed_json,
+                        FixJsonResult(
+                            fixed_json="text",
+                            error_message=None,
+                        ),
+                    )
+                )
             if not fixed_json.error_message:
                 return json.loads(fixed_json.fixed_json)
             else:
@@ -99,10 +124,12 @@ class OutputValidator:
         :return: The validated agent response as a Pydantic model.
         """
         parsed_output = await self.parse_json(
-            text=agent_response, expected_json=expected_json
+            text=agent_response,
+            expected_json=expected_json,
         )
         try:
-            return AgentResponse(**parsed_output)
+            print(parsed_output)
+            return self.try_output_models(parsed_output)
         except ValidationError as e:
             logger.error(
                 f"Validation error for {agent_name}: {e},"
@@ -113,15 +140,17 @@ class OutputValidator:
                 text=agent_response,
             )
             fixed_json = await self._run_agent_func(
-                agent=self.AGENT_NAME,
+                agent=self.AGENT,
                 user_prompt=user_prompt,
-                output_type_example=AgentResponse(
-                    fixed_json="str",
-                    error_message="null or error message",
+                output_type_example=self.try_output_models(
+                    {
+                        "fixed_json": "str",
+                        "error_message": "null or error message",
+                    }
                 ),
             )
             if not fixed_json.error_message:
-                return AgentResponse(**json.loads(fixed_json.fixed_json))
+                return self.try_output_models(json.loads(fixed_json.fixed_json))
             else:
                 raise (
                     ValueError(
@@ -129,3 +158,20 @@ class OutputValidator:
                         f"fix_json failed with error: {fixed_json.error_message}"
                     )
                 )
+
+    @staticmethod
+    def try_output_models(parsed_output: dict[str, Any]) -> AgentResponse:
+        """
+        Attempts to parse the output using different models in order of preference.
+        """
+        for model in [
+            ExtractorResponse,
+            OrchestratorResponse,
+            PlotterResponse,
+            FixJsonResult,
+        ]:
+            try:
+                return model(**parsed_output)
+            except ValidationError:
+                continue
+        raise ValueError("Could not parse output: no valid model matched.")

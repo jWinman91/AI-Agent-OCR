@@ -1,25 +1,30 @@
 import io
-from typing import Tuple
 
 from fastapi import UploadFile
 from PIL import Image
 
 
 class Preprocessor:
-    def resize_image(self, image: UploadFile, max_size: Tuple[int, int]) -> UploadFile:
+    def resize_image(self, image: UploadFile, max_size: int) -> UploadFile:
         """
         Resize the image to fit within max_size while maintaining aspect ratio,
         using Lanczos algorithm.
 
         :param image: UploadFile object representing the image
-        :param max_size: Maximum width and height
+        :param max_size: Maximum width and height for the resized image
         :return: resized image as UploadFile
         """
         pil_image = Image.open(image.file)
-        pil_image.thumbnail(max_size, Image.Resampling.LANCZOS)
+        exif = pil_image.getexif()
+
+        pil_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
         img_byte_arr = io.BytesIO()
-        pil_image.save(img_byte_arr, format=pil_image.format)
+        pil_image.save(
+            img_byte_arr,
+            format=pil_image.format,
+            exif=exif,
+        )
         img_byte_arr.seek(0)
 
         resized_image = UploadFile(

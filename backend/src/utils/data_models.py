@@ -1,12 +1,12 @@
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
 
 class ConfigModelBase(BaseModel):
     model: str
-    model_provider: Optional[str] = None
-    mcp_server: Optional[str] = None
+    model_provider: Optional[str] = "openai"
+    mcp_servers: list[dict[str, Any]] | None = None
     output_type: Optional[bool] = False
     base_url: Optional[str] = "http://localhost:11434/v1"
 
@@ -52,9 +52,9 @@ class FixJsonResult(BaseModel):
     error_message: str | None = None
 
 
-AgentResponse = Union[
-    ExtractorResponse, OrchestratorResponse, PlotterResponse, FixJsonResult
-]
+AgentResponse = (
+    ExtractorResponse | OrchestratorResponse | PlotterResponse | FixJsonResult
+)
 
 
 class AgentResult(BaseModel):

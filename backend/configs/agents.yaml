@@ -35,10 +35,10 @@ extractor:
       - If you cannot find ANY requested data field in the image,
         return an error message in the "error_message" field of your JSON response (see under OUTPUT FORMAT).
 plotter:
-  model: "openai:gpt-5"
-  mcp_server:
-    command: "python"
-    args: ["src/server/plot_mcp_server.py"]
+  model: "gpt-5"
+  mcp_servers:
+    - command: "python"
+      args: ["src/server/plot_mcp_server.py"]
   system_prompt_user: |
     **ANALYSIS TASK**
       - If the user prompt requests data analysis, perform the necessary computations
@@ -65,7 +65,7 @@ plotter:
     $user_part
 
     ** GENERAL RULES**
-      - The data you receive has already been extracted and saved by the extractor agent under {data_path}.
+      - The data you receive has already been extracted and saved by the extractor agent under {data_file_path}.
       - Always inspect the data first to understand its structure and content.
       - Save all plots as PNG files in the specified output directory {output_dir}.
       - Save all dataframes as CSV files in the specified output directory {output_dir}.

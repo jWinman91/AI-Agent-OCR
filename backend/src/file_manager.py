@@ -78,3 +78,15 @@ class FileManager:
             file_object.write(file.file.read())
         logger.info(f"Data file saved at {file_location}")
         return file_location
+
+    def clean_up(self) -> None:
+        """
+        Cleans up the data and plot directories by deleting all files.
+        """
+        for file_name in os.listdir(self.DATA_DIR):
+            os.remove(os.path.join(self.DATA_DIR, file_name))
+        # for file_name in os.listdir(self.PLOT_DIR):
+        #     os.remove(os.path.join(self.PLOT_DIR, file_name))
+        for file_name in os.listdir(self.IMAGE_DIR):
+            os.remove(os.path.join(self.IMAGE_DIR, file_name))
+        logger.info("Cleaned up data, plot, and image directories.")

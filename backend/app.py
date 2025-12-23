@@ -1,15 +1,14 @@
 import os
-import subprocess
 from typing import List, Literal
 
-import pandas as pd
 import uvicorn
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from loguru import logger
 from src.agents_runner import AgentRunner
 from src.config_builder import ConfigBuilder
 from src.file_manager import FileManager
+from src.preprocessor import Preprocessor
 from src.utils.data_models import (
     AgentResult,
     ConfigModelUser,
@@ -37,6 +36,8 @@ class AiAgentOcrApp:
         """
         self.IP = ip
         self.PORT = port
+
+        # MUTUABLE STATES
         self._image_urls = []
         self._data_file_path = ""
 
@@ -44,6 +45,8 @@ class AiAgentOcrApp:
         self.FILE_MANAGER = FileManager(
             data_dir=data_dir, plot_dir=output_dir, image_dir=image_dir
         )
+        self.FILE_MANAGER.clean_up()
+        self.PREPROCESSOR = Preprocessor()
         self.ai_agent_runner = AgentRunner(
             config=self.CONFIG_BUILDER.build_config(),
             data_dir=data_dir,
@@ -107,16 +110,47 @@ class AiAgentOcrApp:
             """
             return self.CONFIG_BUILDER.reset_config_db(config_name)
 
-        @self.app.get("/update_agents/")
+        @self.app.get("/get_mcp_servers/")
+        async def get_mcp_servers() -> dict[str, List[str]]:
+            """
+            Retrieves the list of MCP servers in the src/server directory.
+
+            :return: Dictionary with the list of MCP servers
+            """
+            try:
+                server_files = os.listdir("src/server")
+                mcp_servers = [
+                    f.split("/")[-1] for f in server_files if f.endswith(".py")
+                ]
+                return {"mcp_servers": mcp_servers}
+            except Exception as e:
+                logger.error(f"Error retrieving MCP servers: {e}")
+                raise HTTPException(
+                    status_code=500, detail="Could not retrieve MCP servers"
+                )
+
+        @self.app.post("/set_openai_api_key/")
+        async def set_openai_api_key(api_key: str) -> bool:
+            """
+            Sets the OpenAI API key in the configuration.
+
+            :param api_key: The OpenAI API key
+            :return: True if successful
+            """
+            # set api key in environment variable
+            os.environ["OPENAI_API_KEY"] = api_key
+            return True
+
+        @self.app.post("/update_agents/")
         async def update_agents() -> bool:
             """
             Recreates the agents with the current configuration.
             :return: True if successful
             """
             self._ai_agent_runner = AgentRunner(
-                config=self._config_builder.build_config(),
-                data_dir=self.FILE_MANAGER.get_data_file_path(),
-                output_dir=self.FILE_MANAGER.get_output_dir(),
+                config=self.CONFIG_BUILDER.build_config(),
+                data_dir=self.FILE_MANAGER.get_data_dir(),
+                plots_dir=self.FILE_MANAGER.get_plot_dir(),
             )
             return True
 
@@ -156,14 +190,14 @@ class AiAgentOcrApp:
                 )
             elif agent_name == "plotter":
                 # Get data file path from the file manager
-                output_dir = self.FILE_MANAGER.get_output_dir()
+                output_dir = self.FILE_MANAGER.get_plot_dir()
 
                 # Run the plotter agent and catch ValueErrors from the LLMs
                 try:
-                    plot_res = self.ai_agent_runner.run_plotter(
+                    plot_res = await self.ai_agent_runner.run_plotter(
                         user_prompt=user_prompt,
                         system_prompt_args={
-                            "data_file_path": self._df_file_path,
+                            "data_file_path": self._data_file_path,
                             "output_dir": output_dir,
                         },
                     )
@@ -177,6 +211,9 @@ class AiAgentOcrApp:
                         status_code=422,
                         detail=f"Plotter agent failed to process your input: {e}",
                     )
+
+                # Reset data file path after use
+                self._data_file_path = ""
 
                 return AgentResult(
                     data_file_path=plot_res.df_file_path,
@@ -202,9 +239,14 @@ class AiAgentOcrApp:
             :return: Dictionary with the plot path
             """
             try:
-                return await self.ai_agent_runner.run_ai_ocr_agents(
+                agent_result = await self.ai_agent_runner.run_ai_ocr_agents(
                     user_prompt=user_prompt, image_urls=self._image_urls
                 )
+
+                # Reset image URLs after use
+                self._image_urls = []
+                return agent_result
+
             except ValueError as e:
                 logger.error(f"Error in run_agents: {e}")
                 raise HTTPException(
@@ -231,29 +273,36 @@ class AiAgentOcrApp:
                 )
 
             if resize == "medium":
-                files = self.FILE_MANAGER.resize_images(
-                    files,
-                    max_width=800,
-                    max_height=800,
-                )
+                resize_files = []
+                for file in files:
+                    file = self.PREPROCESSOR.resize_image(
+                        file,
+                        max_size=800,
+                    )
+                    resize_files.append(file)
             elif resize == "small":
-                files = self.FILE_MANAGER.resize_images(
-                    files,
-                    max_width=400,
-                    max_height=400,
-                )
-
-            self._image_urls = self.FILE_MANAGER.upload_images(files)
+                resize_files = []
+                for file in files:
+                    file = self.PREPROCESSOR.resize_image(
+                        file,
+                        max_size=400,
+                    )
+                    resize_files.append(file)
+            else:
+                resize_files = files
+            self._image_urls = self.FILE_MANAGER.upload_images(resize_files)
+            logger.info(f"Uploaded {len(self._image_urls)} images.")
             return True
 
         @self.app.post("/uploaddatafile")
-        async def upload_datafile(file: UploadFile) -> bool:
+        async def upload_datafile(file: UploadFile = File(...)) -> bool:
             if not file.filename.endswith((".csv", ".xlsx", ".xls")):
                 raise HTTPException(
-                    status_code=400, detail="Only CSV or Excel files are allowed"
+                    status_code=422, detail="Only CSV or Excel files are allowed"
                 )
 
             self._data_file_path = self.FILE_MANAGER.upload_data_file(file)
+            logger.info(f"Uploaded data file: {self._data_file_path}")
             return True
 
         @self.app.get("/plot_path/{plot_path:path}/download_plot")
@@ -263,7 +312,6 @@ class AiAgentOcrApp:
             :param plot_path: Name of the file to download
             :return: FileResponse with the requested file
             """
-            plot_path = os.path.join(self.FILE_MANAGER.get_output_dir(), plot_path)
             if os.path.exists(plot_path):
                 return FileResponse(
                     plot_path,
@@ -280,10 +328,11 @@ class AiAgentOcrApp:
             :param df_path: Name of the file to download
             :return: FileResponse with the requested file
             """
-            df_path = os.path.join(self.FILE_MANAGER.get_data_dir(), df_path)
             if os.path.exists(df_path):
                 return FileResponse(
-                    df_path, media_type="csv", filename=os.path.basename(df_path)
+                    df_path,
+                    media_type="csv",
+                    filename=os.path.basename(df_path),
                 )
             else:
                 raise FileNotFoundError(f"File {df_path} not found")

@@ -24,10 +24,11 @@ class ConfigBuilder:
         :param config_file_path: Path to the YAML configuration file.
         :param table_name: Name of the database table to store configurations.
         """
+        config_already_exists = os.path.exists(self.CONFIG_DB_PATH)
         self.SQLITE_HANDLER = sqlite_db_handler.SqliteDBHandler(table_name)
         self.CONFIG_TEMPLATE = self._load_yaml(config_file_path)
 
-        if not os.path.exists(self.CONFIG_DB_PATH):
+        if not config_already_exists:
             for config_name, config in self.CONFIG_TEMPLATE.items():
                 self.write_config_to_db(config_name, ConfigModelDB(**config))
 
@@ -92,7 +93,15 @@ class ConfigBuilder:
         :param config: ConfigModelDBReduced instance containing the configuration data.
         :return: True if the operation was successful, False otherwise.
         """
-        return self.SQLITE_HANDLER.update_config(config.model_dump(), config_name)
+        config_user = config.model_dump()
+        current_prompt_template = self.load_config_from_db(
+            config_name
+        ).system_prompt_template
+
+        if self.PROMPT_TEMPLATE not in config_user:
+            config_user[self.PROMPT_TEMPLATE] = current_prompt_template
+
+        return self.SQLITE_HANDLER.update_config(config_user, config_name)
 
     def reset_config_db(self, config_name: str) -> bool | None:
         """
@@ -102,9 +111,19 @@ class ConfigBuilder:
         :param config_name: Name of the configuration to reset.
         """
         config = self.CONFIG_TEMPLATE[config_name]
+        self.delete_config_from_db(config_name)
         self.write_config_to_db(config_name, ConfigModelDB(**config))
 
         return True
+
+    def delete_config_from_db(self, config_name: str) -> bool | None:
+        """
+        Deletes a configuration from the database.
+
+        :param config_name: Name of the configuration to delete.
+        :return: True if the operation was successful, False otherwise.
+        """
+        return self.SQLITE_HANDLER.delete_config(config_name)
 
     def build_config(self) -> Dict[str, ConfigModelBuild]:
         """
@@ -115,7 +134,7 @@ class ConfigBuilder:
         configs_db = self.load_all_configs_from_db()
         configs = {}
         for config_name, config_db in configs_db.items():
-            config = {}
+            config = config_db.model_dump()
             prompt_template = Template(config_db.model_dump()[self.PROMPT_TEMPLATE])
             user_part = config_db.model_dump()[self.USER_PROMPT]
             config[self.SYSTEM_PROMPT] = prompt_template.substitute(user_part=user_part)

@@ -44,6 +44,7 @@ class AgentRunner:
         self.OUTPUT_VALIDATOR = OutputValidator(
             create_agent_func=self.create_agent,
             run_agent_func=self.run_agent,
+            config=self.CONFIG["fix_json"],
         )
 
     @staticmethod
@@ -64,7 +65,7 @@ class AgentRunner:
         if previous_errors is None:
             previous_errors = {user_prompt: error_message}
         else:
-            previous_errors[user_prompt] += error_message
+            previous_errors[user_prompt] += f"{agent_name}: {error_message} \n"
 
         if len(previous_errors) > 3:
             raise ValueError(
@@ -122,17 +123,24 @@ class AgentRunner:
             cfg["output_type"] = output_type
 
         # initiate model with model provider if ollama should be used
-        if cfg.pop("model_provider", None) == "ollama":
+        model_provider = cfg.pop("model_provider", "openai")
+        if model_provider == "ollama":
             cfg["model"] = OpenAIChatModel(
                 model_name=cfg["model"],
                 provider=OllamaProvider(base_url=base_url),
             )
+        else:
+            cfg["model"] = f"{model_provider}:{cfg['model']}"
 
         # set MCP server if necessary
-        if cfg.pop("mcp_server", None):
-            mcp_server = MCPServerStdio(**cfg["mcp_server"])
-            cfg["toolsets"] = [mcp_server]
-
+        mcp_servers_cfg = cfg.pop("mcp_servers", None)
+        if mcp_servers_cfg is not None:
+            mcp_servers = []
+            for mcp_server_cfg in mcp_servers_cfg:
+                mcp_server = MCPServerStdio(**mcp_server_cfg)
+                mcp_servers.append(mcp_server)
+            cfg["toolsets"] = mcp_servers
+            print(f"Configured MCP servers for agent {agent_name}: {cfg['toolsets']}")
         return Agent(**cfg)
 
     async def run_agent(
@@ -154,13 +162,19 @@ class AgentRunner:
             with open(image_url, "rb") as f:
                 file_content = f.read()
             binary_content = BinaryContent(
-                filename=Path(image_url).name,
-                content=file_content,
-                mime_type="image/png",
+                data=file_content,
+                media_type="image/png",
             )
-            response = await agent.run(user_prompt=user_prompt, file=binary_content)
+            response = await agent.run(
+                [
+                    user_prompt,
+                    binary_content,
+                ]
+            )
         else:
-            response = await agent.run(user_prompt=user_prompt)
+            response = await agent.run([user_prompt])
+
+        logger.info(f"{agent.name} response: {response}")
 
         if type(response.output) is str:
             return await self.OUTPUT_VALIDATOR.validate_output(
@@ -273,7 +287,7 @@ class AgentRunner:
                 previous_errors_extractor = self._error_handling_prompt(
                     agent_name="extractor",
                     error_message=extractor_res.error_message,
-                    user_prompt=user_prompt_extractor,
+                    user_prompt=user_prompt,
                     previous_errors=previous_errors_extractor,
                 )
                 return await self.run_extractor(
@@ -287,6 +301,8 @@ class AgentRunner:
 
             df = pd.concat([df, pd.DataFrame([extractor_res.data])], ignore_index=True)
         df["timestamp"] = timestamps
+
+        logger.info(f"Extracted DataFrame: {df}")
 
         return df, orchestrator_res.plot_prompt
 
@@ -338,7 +354,7 @@ class AgentRunner:
         :param previous_errors_plotter: Previous errors from the plotter agent.
         :return: The final result containing plot and data details.
         """
-        df, plot_prompt = self.run_extractor(
+        df, plot_prompt = await self.run_extractor(
             user_prompt=user_prompt,
             image_urls=image_urls,
             previous_errors_extractor=previous_errors_extractor,
@@ -349,7 +365,7 @@ class AgentRunner:
 
         # Plotter generates plot based on orchestrator's instructions and extracted data
         system_prompt_args_plotter = {
-            "data_path": df_path,
+            "data_file_path": df_path,
             "output_dir": self.PLOTS_DIR,
         }
         plot_res = await self.run_plotter(
@@ -362,7 +378,7 @@ class AgentRunner:
             previous_errors_plotter = self._error_handling_prompt(
                 agent_name="plotter",
                 error_message=plot_res.error_message,
-                user_prompt=plot_prompt,
+                user_prompt=user_prompt,
                 previous_errors=previous_errors_plotter,
             )
             return await self.run_ai_ocr_agents(
