@@ -1,0 +1,152 @@
+import streamlit as st
+from loguru import logger
+from src.parent_run import ParentRun
+
+
+class SingleAgent(ParentRun):
+    """
+    Class to run a single AI agent based on user input and uploaded data files.
+    """
+
+    def build_extractor_widget(self) -> None:
+        """
+        Builds the Streamlit widget to run the Extractor Agent in single mode.
+        """
+        files_uploaded = self.build_upload_widget("extractor_agent")
+        user_prompt = st.text_area(
+            "Enter your prompt for the Extractor Agent...",
+            height=300,
+        )
+
+        submit_button = st.button("Run Extractor Agent")
+
+        if submit_button and user_prompt and files_uploaded:
+            logger.info("Running Extractor Agent...")
+            response_json = self._request_be.post(
+                path="run_single",
+                data={
+                    "user_prompt": user_prompt,
+                    "agent_type": "extractor",
+                },
+            )
+
+            # Fetch generated data and plot from backend
+            st.session_state["df"] = self._get_csv(response_json["data_file_path"])
+
+            with st.container(border=True):
+                # display head of dataframe
+                st.dataframe(st.session_state["df"].head())
+                st.download_button(
+                    label="Download data as CSV",
+                    data=self._convert_df(st.session_state["df"]),
+                    file_name="df.csv",
+                    mime="text/csv",
+                )
+
+            logger.info("Extractor Agent run completed.")
+
+    def build_upload_data_widget(self) -> None:
+        """
+        Builds the Streamlit widget to run the Plotter Agent in single mode.
+        """
+        with st.form("Upload_data", clear_on_submit=True):
+            uploaded_file = st.file_uploader(
+                "Upload your data files here (CSV, Excel, ...)",
+                type=["csv", "xlsx"],
+                accept_multiple_files=False,
+            )
+            submit_button = st.form_submit_button("Upload Data File")
+
+            if submit_button and uploaded_file is not None:
+                success = self._request_be.post(
+                    "uploaddatafile",
+                    {},
+                    uploaded_file,
+                )
+                st.session_state["uploaded_data_file"] = uploaded_file.name
+                logger.info(f"Upload successful: {success}.")
+
+            # Display success message
+            if st.session_state.get("uploaded_data_file") is not None:
+                st.success(
+                    f"Successfully uploaded the file: "
+                    f"{st.session_state['uploaded_data_file']}."
+                )
+                return True
+            return False
+
+    def build_plotter_widget(self) -> None:
+        """
+        Builds the Streamlit widget to run the Plotter Agent in single mode.
+        """
+        data_uploaded = self.build_upload_data_widget()
+        user_prompt = st.text_area(
+            "Enter your plotting requirements here...",
+            height=300,
+        )
+        submit_button = st.button("Generate Plot")
+
+        if user_prompt and submit_button and data_uploaded:
+            with st.spinner("Generating plot..."):
+                try:
+                    # Send request to backend to generate plot
+                    response_json = self._request_be.post(
+                        "run_single_agent",
+                        {
+                            "user_prompt": user_prompt,
+                            "agent_name": "plotter",
+                        },
+                        payload_type="data",
+                    )
+                    st.session_state["tool_used"] = response_json["tool_used"]
+                    st.session_state["code_summary"] = response_json["code_summary"]
+                    logger.info(f"Plot generation response: {response_json}.")
+
+                    image_path = response_json.get("plot_path", None)
+                    data_file_path = response_json.get("data_file_path", None)
+
+                    if data_file_path:
+                        st.session_state["df"] = self._get_csv(data_file_path)
+                        with st.container(border=True):
+                            st.write(f"**Tool used:** {response_json['tool_used']}")
+                            st.dataframe(st.session_state["df"])
+
+                    if image_path:
+                        st.session_state["image"] = self._request_be.get(
+                            path=f"plot_path/{response_json.get('plot_path')}/download_plot",
+                            params=None,
+                            data_type="image",
+                        )
+
+                        with st.container(border=True):
+                            st.write(f"**Tool used:** {response_json['tool_used']}")
+                            st.image(
+                                st.session_state["image"],
+                                caption="Generated Plot",
+                            )
+
+                except Exception as e:
+                    logger.error(f"Error generating plot: {e}")
+                    st.error(f"Error generating plot: {e}")
+
+    def build_page(self) -> None:
+        """
+        Builds the Streamlit page for the single AI agent.
+        """
+        select_agent = st.selectbox(
+            "Select AI Agent",
+            options=["Extractor", "Plotter"],
+            index=0,
+        )
+        print(f"Selected agent: {select_agent}")  # Debug statement
+
+        if select_agent == "Extractor":
+            self.build_extractor_widget()
+        elif select_agent == "Plotter":
+            self.build_plotter_widget()
+        else:
+            st.error("Invalid agent selected.")
+
+
+single_agent = SingleAgent()
+single_agent.build_page()

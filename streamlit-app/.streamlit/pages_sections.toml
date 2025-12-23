@@ -1,9 +1,14 @@
 [[pages]]
 path = "src/agent_configurations.py"
-name = "Configure your PlotAgent"
+name = "Configure your Agents"
 icon = "⚙️"
 
 [[pages]]
-path = "src/generate_plot.py"
-name = "Generate your plot"
+path = "src/run_ai_agent_ocr.py"
+name = "Run AI Agent OCR"
 icon = "📈"
+
+[[pages]]
+path = "src/run_single_agent.py"
+name = "Run Single Agent"
+icon = "🤖"
