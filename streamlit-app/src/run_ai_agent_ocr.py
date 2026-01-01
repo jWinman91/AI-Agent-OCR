@@ -29,7 +29,6 @@ class RunAiAgentOcr(ParentRun):
                         {"user_prompt": user_prompt},
                         payload_type="data",
                     )
-                    st.session_state["tool_used"] = response_json["tool_used"]
                     st.session_state["code_summary"] = response_json["code_summary"]
                     logger.info(f"Plot generation response: {response_json}.")
 
@@ -44,7 +43,6 @@ class RunAiAgentOcr(ParentRun):
                     )
 
                     with st.container(border=True):
-                        st.write(f"**Tool used:** {response_json['tool_used']}")
                         st.download_button(
                             label="Download data as CSV",
                             data=self._convert_df(st.session_state["df"]),
@@ -62,7 +60,6 @@ class RunAiAgentOcr(ParentRun):
                     return
         elif st.session_state.get("image") is not None:
             with st.container(border=True):
-                st.write(f"**Tool used:** {st.session_state['tool_used']}")
                 st.download_button(
                     label="Download data as CSV",
                     data=self._convert_df(st.session_state["df"]),

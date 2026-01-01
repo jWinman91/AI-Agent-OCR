@@ -22,26 +22,42 @@ class SingleAgent(ParentRun):
 
         if submit_button and user_prompt and files_uploaded:
             logger.info("Running Extractor Agent...")
-            response_json = self._request_be.post(
-                path="run_single",
-                data={
-                    "user_prompt": user_prompt,
-                    "agent_type": "extractor",
-                },
+            with st.spinner("Running Extractor Agent..."):
+                try:
+                    response_json = self._request_be.post(
+                        "run_single_agent",
+                        {
+                            "user_prompt": user_prompt,
+                            "agent_name": "extractor",
+                        },
+                        payload_type="data",
+                    )
+
+                    # Fetch generated data and plot from backend
+                    st.session_state["df"] = self._get_csv(
+                        response_json["data_file_path"]
+                    )
+
+                    with st.container(border=True):
+                        # display head of dataframe
+                        st.dataframe(st.session_state["df"].head())
+                        st.download_button(
+                            label="Download data as CSV",
+                            data=self._convert_df(st.session_state["df"]),
+                            file_name="df.csv",
+                            mime="text/csv",
+                        )
+                except Exception as e:
+                    st.error(f"Error running Extractor Agent: {e}")
+                    return
+        elif st.session_state.get("df") is not None:
+            st.dataframe(st.session_state["df"].head())
+            st.download_button(
+                label="Download data as CSV",
+                data=self._convert_df(st.session_state["df"]),
+                file_name="df.csv",
+                mime="text/csv",
             )
-
-            # Fetch generated data and plot from backend
-            st.session_state["df"] = self._get_csv(response_json["data_file_path"])
-
-            with st.container(border=True):
-                # display head of dataframe
-                st.dataframe(st.session_state["df"].head())
-                st.download_button(
-                    label="Download data as CSV",
-                    data=self._convert_df(st.session_state["df"]),
-                    file_name="df.csv",
-                    mime="text/csv",
-                )
 
             logger.info("Extractor Agent run completed.")
 
@@ -86,7 +102,17 @@ class SingleAgent(ParentRun):
         )
         submit_button = st.button("Generate Plot")
 
-        if user_prompt and submit_button and data_uploaded:
+        # Get the config file for the plotter agent and check for available tools
+        plotter_config = self._request_be.get(
+            "get_config",
+            {"config_name": "plotter"},
+        )
+        mcp_servers = plotter_config.get("mcp_servers", [])
+        download_tool_available = any(
+            map(lambda x: "download" in str(x["args"]), mcp_servers)
+        )
+
+        if user_prompt and submit_button and (data_uploaded or download_tool_available):
             with st.spinner("Generating plot..."):
                 try:
                     # Send request to backend to generate plot
@@ -98,7 +124,6 @@ class SingleAgent(ParentRun):
                         },
                         payload_type="data",
                     )
-                    st.session_state["tool_used"] = response_json["tool_used"]
                     st.session_state["code_summary"] = response_json["code_summary"]
                     logger.info(f"Plot generation response: {response_json}.")
 
@@ -108,7 +133,6 @@ class SingleAgent(ParentRun):
                     if data_file_path:
                         st.session_state["df"] = self._get_csv(data_file_path)
                         with st.container(border=True):
-                            st.write(f"**Tool used:** {response_json['tool_used']}")
                             st.dataframe(st.session_state["df"])
 
                     if image_path:
@@ -119,15 +143,25 @@ class SingleAgent(ParentRun):
                         )
 
                         with st.container(border=True):
-                            st.write(f"**Tool used:** {response_json['tool_used']}")
                             st.image(
                                 st.session_state["image"],
-                                caption="Generated Plot",
+                                caption=st.session_state["code_summary"],
                             )
+
+                    if not data_file_path and not image_path:
+                        st.error("No plot or data generated.")
 
                 except Exception as e:
                     logger.error(f"Error generating plot: {e}")
                     st.error(f"Error generating plot: {e}")
+        elif st.session_state.get("df") is not None:
+            with st.container(border=True):
+                st.dataframe(st.session_state["df"])
+        elif st.session_state.get("image") is not None:
+            with st.container(border=True):
+                st.image(
+                    st.session_state["image"], caption=st.session_state["code_summary"]
+                )
 
     def build_page(self) -> None:
         """
@@ -138,7 +172,6 @@ class SingleAgent(ParentRun):
             options=["Extractor", "Plotter"],
             index=0,
         )
-        print(f"Selected agent: {select_agent}")  # Debug statement
 
         if select_agent == "Extractor":
             self.build_extractor_widget()

@@ -30,7 +30,7 @@ class ParentRun:
         """
         self._request_be = BeRequest(ip, port, protocol)
         st.session_state["uploaded_data_file"] = st.session_state.get(
-            "uploaded_data_files", None
+            "uploaded_data_file", None
         )
         st.session_state["update_agents"] = st.session_state.get(
             self._request_be.post("update_agents"), False
@@ -41,7 +41,6 @@ class ParentRun:
         )
         st.session_state["df"] = st.session_state.get("df", None)
         st.session_state["image"] = st.session_state.get("image", None)
-        st.session_state["tool_used"] = st.session_state.get("tool_used", None)
         st.session_state["code_summary"] = st.session_state.get("code_summary", None)
 
     def _get_csv(self, file_name: str) -> pd.DataFrame:
