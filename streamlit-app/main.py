@@ -1,10 +1,9 @@
 import streamlit as st
 from st_pages import add_page_title, get_nav_from_toml
 
-
 if __name__ == "__main__":
     st.set_page_config(
-        page_title="Plot Agent",
+        page_title="AI Agent OCR",
         page_icon="",
     )
 
