@@ -40,9 +40,8 @@ class OrchestratorResponse(BaseModel):
 
 
 class PlotterResponse(BaseModel):
-    df_file_path: str
-    plot_path: str
-    tool_used: str
+    df_file_path: str | None
+    plot_path: str | None
     code_summary: str
     error_message: str | None = None
 
@@ -58,7 +57,6 @@ AgentResponse = (
 
 
 class AgentResult(BaseModel):
-    plot_path: str = ""
-    tool_used: str = ""
-    code_summary: str = ""
-    data_file_path: str = ""
+    plot_path: str | None = None
+    code_summary: str | None = None
+    data_file_path: str | None = None

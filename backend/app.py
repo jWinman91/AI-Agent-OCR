@@ -167,7 +167,7 @@ class AiAgentOcrApp:
 
                 # Run the extractor agent and catch ValueErrors from the LLMs
                 try:
-                    df, _ = self.ai_agent_runner.run_extractor(
+                    df, _ = await self.ai_agent_runner.run_extractor(
                         user_prompt=user_prompt,
                         image_urls=self._image_urls,
                         previous_errors_extractor={},
@@ -176,7 +176,7 @@ class AiAgentOcrApp:
                 except ValueError as e:
                     logger.error(f"Error in extractor: {e}")
                     raise HTTPException(
-                        status_code=422,
+                        status_code=500,
                         detail=f"Extractor agent failed to process your input: {e}",
                     )
 
@@ -208,7 +208,7 @@ class AiAgentOcrApp:
                 except ValueError as e:
                     logger.error(f"Error in plotter: {e}")
                     raise HTTPException(
-                        status_code=422,
+                        status_code=500,
                         detail=f"Plotter agent failed to process your input: {e}",
                     )
 
@@ -219,12 +219,11 @@ class AiAgentOcrApp:
                     data_file_path=plot_res.df_file_path,
                     plot_path=plot_res.plot_path,
                     code_summary=plot_res.code_summary,
-                    tool_used=plot_res.tool_used,
                 )
 
             else:
                 raise HTTPException(
-                    status_code=400,
+                    status_code=422,
                     detail=(
                         f"Invalid agent {agent_name}."
                         f"Agent must be eihter 'extractor' or 'plotter'",
@@ -250,7 +249,7 @@ class AiAgentOcrApp:
             except ValueError as e:
                 logger.error(f"Error in run_agents: {e}")
                 raise HTTPException(
-                    status_code=422,
+                    status_code=500,
                     detail=f"Your input could not be processed by the agents: {e}",
                 )
 
@@ -268,7 +267,7 @@ class AiAgentOcrApp:
                 file.filename.endswith((".png", ".jpg", ".jpeg")) for file in files
             ):
                 raise HTTPException(
-                    status_code=400,
+                    status_code=422,
                     detail="Only image files with extensions png, jpg, jpeg are allowed",
                 )
 

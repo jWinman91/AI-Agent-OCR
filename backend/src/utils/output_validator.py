@@ -19,6 +19,7 @@ class OutputValidator:
     PROMPT = (
         "Expected json format: {expected_json}."
         "Corrupted JSON that you need to fix: {text}"
+        "Error message from previous parsing attempt: {error_message}"
     )
     AGENT: object | None = None
 
@@ -75,6 +76,7 @@ class OutputValidator:
             user_prompt = self.PROMPT.format(
                 expected_json=expected_json.model_dump(),
                 text=text,
+                error_message=str(e),
             )
             fixed_json = await self._run_agent_func(
                 agent=self.AGENT,
@@ -86,8 +88,6 @@ class OutputValidator:
                     }
                 ),
             )
-            fixed_json = fixed_json.output
-            print(f"fixed_json: {fixed_json}")
             if type(fixed_json) is not FixJsonResult and type(fixed_json) is str:
                 fixed_json = FixJsonResult(
                     **await self.parse_json(
@@ -128,7 +128,6 @@ class OutputValidator:
             expected_json=expected_json,
         )
         try:
-            print(parsed_output)
             return self.try_output_models(parsed_output)
         except ValidationError as e:
             logger.error(
@@ -138,6 +137,7 @@ class OutputValidator:
             user_prompt = self.PROMPT.format(
                 expected_json=expected_json.model_dump(),
                 text=agent_response,
+                error_message=str(e),
             )
             fixed_json = await self._run_agent_func(
                 agent=self.AGENT,

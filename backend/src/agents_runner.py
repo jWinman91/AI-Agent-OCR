@@ -1,6 +1,6 @@
 import datetime
 import logging
-from pathlib import Path
+import time
 from typing import Any, Dict, List, Literal, Tuple
 
 import pandas
@@ -140,8 +140,12 @@ class AgentRunner:
                 mcp_server = MCPServerStdio(**mcp_server_cfg)
                 mcp_servers.append(mcp_server)
             cfg["toolsets"] = mcp_servers
-            print(f"Configured MCP servers for agent {agent_name}: {cfg['toolsets']}")
-        return Agent(**cfg)
+            logger.info(
+                f"Configured MCP servers for agent {agent_name}: {cfg['toolsets']}"
+            )
+        agent = Agent(**cfg)
+        agent.name = agent_name
+        return agent
 
     async def run_agent(
         self,
@@ -158,6 +162,7 @@ class AgentRunner:
         :param image_url: Optional path to an image file to provide to the agent.
         :return: The agent's response, validated explicitly if it's a string output.
         """
+        t0 = time.time()
         if image_url is not None:
             with open(image_url, "rb") as f:
                 file_content = f.read()
@@ -174,14 +179,19 @@ class AgentRunner:
         else:
             response = await agent.run([user_prompt])
 
-        logger.info(f"{agent.name} response: {response}")
+        image_log = f" with image {image_url}" if image_url is not None else ""
+
+        logger.info(
+            f"{agent.name} response in {time.time() - t0:.2f} sec"
+            f"{image_log}: {response}"
+        )
 
         if type(response.output) is str:
             return await self.OUTPUT_VALIDATOR.validate_output(
                 response.output, agent.name if agent.name else "", output_type_example
             )
         else:
-            return response
+            return response.output
 
     async def run_orchestrator(
         self, user_prompt: str, system_prompt_args: dict[str, Any] | None = None
@@ -218,8 +228,6 @@ class AgentRunner:
         if orchestrator_res.error_message and orchestrator_res.error_message != "":
             logger.error(f"Error in orchestrator: {orchestrator_res.error_message}")
             raise ValueError(f"Error in orchestrator: {orchestrator_res.error_message}")
-
-        logger.info(f"orchestrator: {orchestrator_res}")
 
         return orchestrator_res
 
@@ -276,8 +284,6 @@ class AgentRunner:
                 ),
             )
 
-            logger.info(f"extractor for image {image_url}: {extractor_res}")
-
             # Retry if error in extractor
             if extractor_res.error_message and extractor_res.error_message != "":
                 logger.error(
@@ -301,8 +307,9 @@ class AgentRunner:
 
             df = pd.concat([df, pd.DataFrame([extractor_res.data])], ignore_index=True)
         df["timestamp"] = timestamps
+        df["image_url"] = image_urls
 
-        logger.info(f"Extracted DataFrame: {df}")
+        logger.info(f"Extracted DataFrame:\n{df}")
 
         return df, orchestrator_res.plot_prompt
 
@@ -390,7 +397,6 @@ class AgentRunner:
 
         return AgentResult(
             plot_path=plot_res.plot_path,
-            tool_used=plot_res.tool_used,
             code_summary=plot_res.code_summary,
             data_file_path=df_path,
         )
