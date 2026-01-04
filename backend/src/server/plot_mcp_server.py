@@ -6,7 +6,7 @@ import pandas as pd
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 
-mcp_server = FastMCP("Plot")
+mcp_server = FastMCP("FastMCP Server to analayse and visualise data")
 
 OUTPUT_DIR = "plots"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
