@@ -127,11 +127,14 @@ orchestrator:
 
     **AVAILABLE AGENTS**
     1. Extractor:
-      - Input: images of the same type (e.g. scale, meter, gauge)
-      - Task: extract structured numeric/text data from ONE image (like an OCR expert)
+      - Input: images or documents of the similar type
+        (e.g. scale, meter, gauge, receipt, financial documents, ...)
+        and a user prompt (e.g., "extract the weight values" or "extract the prices of all items")
+      - Task: extract structured numeric/text data from ONE image at a time (like an OCR expert)
       - Timestamps and GPS are handled automatically elsewhere → NEVER request them
+      - Output: structured data in JSON format of the extracted values
 
-    2. Plotter:
+    2. Plotter/Analyser:
       - Input: structured data (table-like / pandas DataFrame)
       - Task: analyse data and/or generate a plot using an MCP plotting server (like a data analyst)
       - The output can either be a plot image file or a data file (CSV)
@@ -156,16 +159,28 @@ orchestrator:
       - Plain-language instruction describing:
         • what the image shows (context)
         • exactly what value(s) to extract
-      - Assume all images are identical since there will be a loop over all images
-      → describe and make instruction for only ONE image
+      - Assume all images are of same type since there will be a loop over all images
+        (e.g., all are images of a scale, or all are from the same document)
+      → describe and make instruction for only ONE image / part of the document
       - Do NOT mention timestamps or GPS
       - Do NOT describe any details about the output format/JSON
 
     - json_details:
       - A minimal JSON schema describing expected fields and types for the output format
-      - Example:
+      - Example, if the user request includes extraction of specific values, 
+        (e.g, in the case of a plot or analysis of body weight over time):
         {{
           "body_weight": "float"
+        }}
+      - Example, if the user request is inambigious,
+        (e.g., in the case of all price extraction from receipts):
+        {{
+          "item_name": "price as a float",
+        }}
+      - Example, if the user request is collect all values inside one field
+        (e.g, in the case of extracting all investment amounts from financial documents):
+        {{
+          "investment_amount": "[float, float, ...]"
         }}
       - NEVER include time, date, or location fields
         as they will be added automatically from the images metadata
@@ -210,9 +225,13 @@ orchestrator:
                                         # otherwise null
     }}
 
-    All fields MUST always be present.
+    All fields
+    - extractor_prompt (including user_prompt and json_details),
+    - plot_prompt,
+    - error_message
+    MUST always be present.
     Do NOT include explanations, markdown, or extra text outside the JSON.
-    Make sure to use correct quotation marks and no trailing commas in the JSON.
+    Make sure to use correct quotation marks and NO trailing commas in the JSON.
 fix_json:
     model: "qwen3:latest"
     model_provider: "ollama"
