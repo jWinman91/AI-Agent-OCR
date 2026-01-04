@@ -309,6 +309,16 @@ class AgentRunner:
         df["timestamp"] = timestamps
         df["image_url"] = image_urls
 
+        # Explode dataframe if any column contains a list or tuple
+        cols_to_explode = [
+            col
+            for col in df.columns
+            if df[col].apply(lambda x: isinstance(x, (list, tuple))).any()
+        ]
+
+        if cols_to_explode:
+            df = df.explode(cols_to_explode, ignore_index=True)
+
         logger.info(f"Extracted DataFrame:\n{df}")
 
         return df, orchestrator_res.plot_prompt
