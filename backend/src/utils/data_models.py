@@ -4,6 +4,10 @@ from pydantic import BaseModel
 
 
 class ConfigModelBase(BaseModel):
+    """
+    Base configuration model including only base infos.
+    """
+
     model: str
     model_provider: Optional[str] = "openai"
     mcp_servers: list[dict[str, Any]] | None = None
@@ -12,34 +16,62 @@ class ConfigModelBase(BaseModel):
 
 
 class ConfigModelBuild(ConfigModelBase):
+    """
+    Configuration model for the config after building.
+    """
+
     system_prompt: str
 
 
 class ConfigModelUser(ConfigModelBase):
+    """
+    Configuration model for fields set by the user.
+    """
+
     system_prompt_user: str
 
 
 class ConfigModelDB(ConfigModelUser):
+    """
+    Configuration model for fields stored in the database.
+    """
+
     system_prompt_template: str
 
 
-class ExtractorResponse(BaseModel):
+class DataExtractorResponse(BaseModel):
+    """
+    Response model for the data extractor agent.
+    """
+
     data: dict[str, Any]
     error_message: str | None = None
 
 
-class ExtractorPrompt(BaseModel):
+class DataExtractorPrompt(BaseModel):
+    """
+    Prompt model for the data extractor agent.
+    """
+
     user_prompt: str
     json_details: dict[str, Any]
 
 
 class OrchestratorResponse(BaseModel):
-    plot_prompt: str
-    extractor_prompt: ExtractorPrompt
+    """
+    Response model for the orchestrator agent.
+    """
+
+    analyser_prompt: str
+    data_extractor_prompt: DataExtractorPrompt
     error_message: str | None = None
 
 
-class PlotterResponse(BaseModel):
+class AnalyserResponse(BaseModel):
+    """
+    Response model for the analyser agent.
+    """
+
     df_file_path: str | None
     plot_path: str | None
     code_summary: str
@@ -47,16 +79,24 @@ class PlotterResponse(BaseModel):
 
 
 class FixJsonResult(BaseModel):
+    """
+    Response model for the fix/repair JSON agent.
+    """
+
     fixed_json: str
     error_message: str | None = None
 
 
 AgentResponse = (
-    ExtractorResponse | OrchestratorResponse | PlotterResponse | FixJsonResult
+    DataExtractorResponse | OrchestratorResponse | AnalyserResponse | FixJsonResult
 )
 
 
 class AgentResult(BaseModel):
+    """
+    Result model for the agent.
+    """
+
     plot_path: str | None = None
     code_summary: str | None = None
     data_file_path: str | None = None

@@ -8,10 +8,10 @@ from pydantic import ValidationError
 from pydantic_ai import Agent
 from src.utils.data_models import (
     AgentResponse,
-    ExtractorResponse,
+    AnalyserResponse,
+    DataExtractorResponse,
     FixJsonResult,
     OrchestratorResponse,
-    PlotterResponse,
 )
 
 
@@ -165,9 +165,9 @@ class OutputValidator:
         Attempts to parse the output using different models in order of preference.
         """
         for model in [
-            ExtractorResponse,
+            DataExtractorResponse,
             OrchestratorResponse,
-            PlotterResponse,
+            AnalyserResponse,
             FixJsonResult,
         ]:
             try:

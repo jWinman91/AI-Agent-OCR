@@ -2,7 +2,7 @@ import os
 from typing import List, Literal
 
 import uvicorn
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from loguru import logger
 from src.agents_runner import AgentRunner
@@ -59,7 +59,7 @@ class AiAgentOcrApp:
     def _register_routes(self) -> None:
         @self.app.post("/upload_config/")
         async def upload_config(
-            config_name: Literal["extractor", "plotter"], config: ConfigModelUser
+            config_name: Literal["data_extractor", "analyser"], config: ConfigModelUser
         ) -> bool | None:
             """
             Uploads a new configuration to the database.
@@ -71,7 +71,7 @@ class AiAgentOcrApp:
 
         @self.app.get("/get_config/")
         async def get_config(
-            config_name: Literal["extractor", "plotter"],
+            config_name: Literal["data_extractor", "analyser"],
         ) -> ConfigModelUser:
             """
             Retrieves a configuration from the database.
@@ -95,12 +95,12 @@ class AiAgentOcrApp:
             return {
                 name: ConfigModelUser(**config.model_dump())
                 for name, config in configs.items()
-                if name in ["extractor", "plotter"]
+                if name in ["data_extractor", "analyser"]
             }
 
         @self.app.post("/reset_config/")
         async def reset_config(
-            config_name: Literal["extractor", "plotter"],
+            config_name: Literal["data_extractor", "analyser"],
         ) -> bool | None:
             """
             Resets a configuration in the database to its default state.
@@ -157,27 +157,33 @@ class AiAgentOcrApp:
         @self.app.post("/run_single_agent")
         async def run_single_agent(
             user_prompt: str = Form(...),
-            agent_name: Literal["extractor", "plotter"] = Form(...),
+            agent_name: Literal["data_extractor", "analyser"] = Form(...),
         ) -> AgentResult:
-            if agent_name == "extractor":
+            """
+            Endpoint to run a single agent.
+
+            :param user_prompt: User prompt to process
+            :param agent_name: Name of the agent to run
+            :return: Dictionary with the plot path
+            """
+            if agent_name == "data_extractor":
                 # Get image URLs from the file manager
                 data_dir = self.FILE_MANAGER.get_data_dir()
                 if len(self._image_urls) == 0:
-                    raise ValueError("Extractor agent requires images to process!")
-
-                # Run the extractor agent and catch ValueErrors from the LLMs
+                    raise ValueError("Data extractor agent requires images to process!")
+                # Run the data extractor agent and catch ValueErrors from the LLMs
                 try:
-                    df, _ = await self.ai_agent_runner.run_extractor(
+                    df, _ = await self.ai_agent_runner.run_data_extractor(
                         user_prompt=user_prompt,
                         image_urls=self._image_urls,
-                        previous_errors_extractor={},
-                        previous_errors_plotter={},
+                        previous_errors_data_extractor={},
+                        previous_errors_analyser={},
                     )
                 except ValueError as e:
-                    logger.error(f"Error in extractor: {e}")
+                    logger.error(f"Error in data extractor: {e}")
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Extractor agent failed to process your input: {e}",
+                        detail=f"Data extractor agent failed to process your input: {e}",
                     )
 
                 df_path = f"{data_dir}/extracted_data.csv"
@@ -188,37 +194,37 @@ class AiAgentOcrApp:
                     code_summary="",
                     tool_used="",
                 )
-            elif agent_name == "plotter":
+            elif agent_name == "analyser":
                 # Get data file path from the file manager
                 output_dir = self.FILE_MANAGER.get_plot_dir()
 
-                # Run the plotter agent and catch ValueErrors from the LLMs
+                # Run the analyser agent and catch ValueErrors from the LLMs
                 try:
-                    plot_res = await self.ai_agent_runner.run_plotter(
+                    analyser_res = await self.ai_agent_runner.run_analyser(
                         user_prompt=user_prompt,
                         system_prompt_args={
                             "data_file_path": self._data_file_path,
                             "output_dir": output_dir,
                         },
                     )
-                    if plot_res.error_message and plot_res.error_message != "":
-                        logger.error(f"Error in plotter: {plot_res.error_message}")
-                        raise ValueError(plot_res.error_message)
+                    if analyser_res.error_message and analyser_res.error_message != "":
+                        logger.error(f"Error in analyser: {analyser_res.error_message}")
+                        raise ValueError(analyser_res.error_message)
 
                 except ValueError as e:
-                    logger.error(f"Error in plotter: {e}")
+                    logger.error(f"Error in analyser: {e}")
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Plotter agent failed to process your input: {e}",
+                        detail=f"Analyser agent failed to process your input: {e}",
                     )
 
                 # Reset data file path after use
                 self._data_file_path = ""
 
                 return AgentResult(
-                    data_file_path=plot_res.df_file_path,
-                    plot_path=plot_res.plot_path,
-                    code_summary=plot_res.code_summary,
+                    data_file_path=analyser_res.df_file_path,
+                    plot_path=analyser_res.plot_path,
+                    code_summary=analyser_res.code_summary,
                 )
 
             else:
@@ -226,14 +232,15 @@ class AiAgentOcrApp:
                     status_code=422,
                     detail=(
                         f"Invalid agent {agent_name}."
-                        f"Agent must be eihter 'extractor' or 'plotter'",
+                        f"Agent must be either 'data_extractor' or 'analyser'",
                     ),
                 )
 
         @self.app.post("/run_agents")
         async def run_ai_ocr_agents(user_prompt: str = Form(...)) -> AgentResult:
             """
-            Endpoint to run the agents.
+            Endpoint to run the agents (both Data Extractor and Analyser) in sequence.
+
             :param user_prompt: User prompt to process
             :return: Dictionary with the plot path
             """
@@ -260,7 +267,9 @@ class AiAgentOcrApp:
         ) -> bool:
             """
             Endpoint to upload images.
+
             :param files: List of image files to upload
+            :param resize: Resize option for images
             :return: True if successful
             """
             if not all(
@@ -295,6 +304,12 @@ class AiAgentOcrApp:
 
         @self.app.post("/uploaddatafile")
         async def upload_datafile(file: UploadFile = File(...)) -> bool:
+            """
+            Endpoint to upload a data file.
+
+            :param file: Data file to upload
+            :return: True if successful
+            """
             if not file.filename.endswith((".csv", ".xlsx", ".xls")):
                 raise HTTPException(
                     status_code=422, detail="Only CSV or Excel files are allowed"
@@ -308,6 +323,7 @@ class AiAgentOcrApp:
         async def download_plot(plot_path: str) -> FileResponse:
             """
             Endpoint to download a file.
+
             :param plot_path: Name of the file to download
             :return: FileResponse with the requested file
             """
@@ -324,6 +340,7 @@ class AiAgentOcrApp:
         async def download_data(df_path: str) -> FileResponse:
             """
             Endpoint to download a file.
+
             :param df_path: Name of the file to download
             :return: FileResponse with the requested file
             """
