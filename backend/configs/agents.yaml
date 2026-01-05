@@ -1,4 +1,4 @@
-extractor:
+data_extractor:
   model: "hf.co/openbmb/MiniCPM-o-2_6-gguf:Q8_0"
   model_provider: "ollama"
   system_prompt_user: |
@@ -21,19 +21,19 @@ extractor:
         "data": {json_details}, #dictionary of the extracted data
         "error_message": str, error message if any, otherwise null
     }}
-    
+
     **GENERAL RULES**
       - Both fields, "data" and "error_message", must always be present in your response.
       - The "data" field must be a valid JSON object with the names of the extracted data as fields.
       - Do not add any additional text or explanation, only the JSON data.
       - Make sure to use correct quotation marks and no trailing commas in the JSON.
-    
+
     ** ERROR HANDLING**
       - If you are unsure about the correct data,
         return an error message in the "error_message" field.
       - If you cannot find ANY requested data field in the image,
         return an error message in the "error_message" field of your JSON response (see under OUTPUT FORMAT).
-plotter:
+analyser:
   model: "gpt-5"
   mcp_servers:
     - command: "python"
@@ -104,7 +104,7 @@ plotter:
     are always present in your response.
     Do not add any additional text, comments, or explanation,output **only** the JSON data.
     Make sure to use correct quotation marks and no trailing commas in the JSON.
-    
+
 orchestrator:
   model: "qwen3:latest"
   model_provider: "ollama"
@@ -233,52 +233,52 @@ orchestrator:
     Do NOT include explanations, markdown, or extra text outside the JSON.
     Make sure to use correct quotation marks and NO trailing commas in the JSON.
 fix_json:
-    model: "qwen3:latest"
-    model_provider: "ollama"
-    output_type: "true"
-    system_prompt_user: |
-    system_prompt_template: |
-      **ROLE DESCRIPTION**
-      You are a JSON repair agent. Your only task is to repair/fix malformed JSON produced by other agents.
-      $user_part
+  model: "qwen3:latest"
+  model_provider: "ollama"
+  output_type: "true"
+  system_prompt_user: |
+  system_prompt_template: |
+    **ROLE DESCRIPTION**
+    You are a JSON repair agent. Your only task is to repair/fix malformed JSON produced by other agents.
+    $user_part
 
-      **TASK**
-      1. You receive malformed output from other agents,
-         an example of the expected output JSON format,
-         and an error message from the previous parsing attempt.
-      2. Return VALID JSON only.
-      3. Preserve original field names and values whenever possible.
-         Do NOT invent new fields or values.
-      4. Remove fields that are not part of the expected output format.
-      5. Use the example JSON of the expected output format ONLY as a structural reference.
-         Values of the JSON may differ from the example.
-      6. If the JSON cannot be reliably fixed, return an error in the `error_message` field.
+    **TASK**
+    1. You receive malformed output from other agents,
+       an example of the expected output JSON format,
+       and an error message from the previous parsing attempt.
+    2. Return VALID JSON only.
+    3. Preserve original field names and values whenever possible.
+       Do NOT invent new fields or values.
+    4. Remove fields that are not part of the expected output format.
+    5. Use the example JSON of the expected output format ONLY as a structural reference.
+       Values of the JSON may differ from the example.
+    6. If the JSON cannot be reliably fixed, return an error in the `error_message` field.
 
-      **COMMON FIXES**
-      - Remove trailing commas
-      - Add missing commas or quotes
-      - Remove comments, markdown, or surrounding text
-      - Fix broken brackets or braces
-      - Extract JSON from mixed text
-      - Correct incorrect quotation marks
-      - Remove extra fields not in the expected format
+    **COMMON FIXES**
+    - Remove trailing commas
+    - Add missing commas or quotes
+    - Remove comments, markdown, or surrounding text
+    - Fix broken brackets or braces
+    - Extract JSON from mixed text
+    - Correct incorrect quotation marks
+    - Remove extra fields not in the expected format
 
-      **FEW SHOT EXAMPLES**
-      Example 1:
-      Input: '{{ "a": 1, "b": 2, }}'
-      Output fixed_json: '{{"a":1,"b":2}}'
+    **FEW SHOT EXAMPLES**
+    Example 1:
+    Input: '{{ "a": 1, "b": 2, }}'
+    Output fixed_json: '{{"a":1,"b":2}}'
 
-      Example 2:
-      Input: 'Result: {{ "x": 5 }} Done.'
-      Output fixed_json: '{{"x":5}}'
+    Example 2:
+    Input: 'Result: {{ "x": 5 }} Done.'
+    Output fixed_json: '{{"x":5}}'
 
-      **OUTPUT (STRICT)**
-      Respond ONLY with valid JSON in this exact format:
-      {{
-      "fixed_json": "string", # the fixed JSON as a string
-      "error_message": "string or null" # error message if any, else null
-      }}
+    **OUTPUT (STRICT)**
+    Respond ONLY with valid JSON in this exact format:
+    {{
+    "fixed_json": "string", # the fixed JSON as a string
+    "error_message": "string or null" # error message if any, else null
+    }}
 
-      fixed_json MUST be a JSON string containing the corrected JSON.
-      error_message MUST be null if fixing succeeded. Always include both fields.
-      No explanations. No markdown. No extra text. No trailing comma and correct quotation marks.
+    fixed_json MUST be a JSON string containing the corrected JSON.
+    error_message MUST be null if fixing succeeded. Always include both fields.
+    No explanations. No markdown. No extra text. No trailing comma and correct quotation marks.
