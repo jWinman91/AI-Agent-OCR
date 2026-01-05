@@ -95,7 +95,7 @@ def install_python_library(library_name: str) -> dict[str, str]:
     import subprocess
 
     try:
-        subprocess.check_call(["pip", "install", library_name])
+        subprocess.check_call(["uv", "pip", "install", library_name])
         return {"message": f"Successfully installed {library_name}"}
     except subprocess.CalledProcessError as e:
         return {"error": str(e)}

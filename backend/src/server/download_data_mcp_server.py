@@ -7,7 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 # FastMCP server to download data from different APIs
-app = FastMCP(title="FastMCP Server to download data")
+app = FastMCP("FastMCP Server to download data")
 
 
 class YFinanceRequest(BaseModel):
@@ -25,7 +25,7 @@ class ProxyRequest(BaseModel):
     method: Optional[str] = "GET"
     params: Optional[dict] = None
     headers: Optional[dict] = None
-    json: Optional[dict] = None
+    json_field: Optional[dict] = None
     timeout: Optional[float] = 10.0
 
 
@@ -48,7 +48,13 @@ def safe_filename(name: str) -> str:
 
 @app.tool()
 def download_yfinance(req: YFinanceRequest, file_name: str) -> dict[str, str]:
-    """ """
+    """
+    Download historical market data from Yahoo Finance and save to CSV.
+
+    param req: YFinanceRequest object with parameters for data retrieval
+    param file_name: Name of the CSV file to save data (must end with .csv
+    return: dict with path to stored data file or error message
+    """
     if not file_name.endswith(".csv"):
         return {"error": "file_name MUST end with .csv"}
 
@@ -72,6 +78,13 @@ def download_yfinance(req: YFinanceRequest, file_name: str) -> dict[str, str]:
 
 @app.tool()
 def proxy_request(req: ProxyRequest, file_name: str) -> dict[str, str]:
+    """
+    Make a proxy HTTP request to download data and save to CSV.
+
+    param req: ProxyRequest object with parameters for the HTTP request
+    param file_name: Name of the CSV file to save data (must end with .csv)
+    return: dict with path to stored data file or error message
+    """
     parsed = urlparse(req.url)
     hostname = parsed.hostname or ""
 
@@ -89,7 +102,7 @@ def proxy_request(req: ProxyRequest, file_name: str) -> dict[str, str]:
             url=req.url,
             params=req.params,
             headers=req.headers,
-            json=req.json,
+            json=req.json_field,
             timeout=req.timeout,
             stream=True,
         )
@@ -105,7 +118,15 @@ def proxy_request(req: ProxyRequest, file_name: str) -> dict[str, str]:
     return {"file_path": file_path}
 
 
-# Optional: list allowed providers
 @app.tool()
 def allowed_hosts() -> dict[str, list[str]]:
+    """
+    Return the list of allowed hosts for proxy requests.
+
+    return: dict with list of allowed hosts
+    """
     return {"allowed_hosts_for_proxy_request": sorted(list(ALLOWED_HOSTS))}
+
+
+if __name__ == "__main__":
+    app.run(transport="stdio")
