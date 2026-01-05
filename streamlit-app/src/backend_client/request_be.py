@@ -122,7 +122,7 @@ class BeRequest:
     def post(
         self,
         path: str,
-        config_name: Literal["extractor", "plotter"],
+        config_name: Literal["data_extractor", "analyser"],
         config: dict[str, Any],
     ) -> dict[str, Any]:
         """

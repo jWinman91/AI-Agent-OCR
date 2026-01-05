@@ -10,9 +10,9 @@ class ParentRun:
     """
     Class to run different AI agents in different modes based on user input and uploaded
     data files:
-    - Single Agent Mode: Run a single AI agent (Extractor or Plotter).
-    - AI Agent OCR Mode: Generate plots by running both Extractor and Plotter agents in
-    sequence.
+    - Single Agent Mode: Run a single AI agent (Data Extractor or Analyser).
+    - AI Agent OCR Mode: Generate plots by running both Data Extractor and Analyser
+    agents in sequence.
     """
 
     def __init__(
@@ -22,18 +22,17 @@ class ParentRun:
         protocol: str = "http",
     ) -> None:
         """
-        Initializes the GeneratePlot with backend connection details.
+        Initializes the ParentRun with backend connection details.
 
         :param ip: IP address of the backend server.
         :param port: Port number of the backend server.
         :param protocol: Protocol to use for the request (default is "http").
         """
         self._request_be = BeRequest(ip, port, protocol)
+        st.session_state["update_agents"] = self._request_be.post("update_agents")
+
         st.session_state["uploaded_data_file"] = st.session_state.get(
             "uploaded_data_file", None
-        )
-        st.session_state["update_agents"] = st.session_state.get(
-            self._request_be.post("update_agents"), False
         )
 
         st.session_state["uploaded_images"] = st.session_state.get(
@@ -74,6 +73,9 @@ class ParentRun:
         """
         Builds the upload widget for the Streamlit app.
         Allows users to upload data files for plotting.
+
+        :param page_name: Name of the current page for unique widget identification.
+        :return: True if files were uploaded successfully, False otherwise.
         """
         with st.form(f"Upload_widget_{page_name}", clear_on_submit=True):
             uploaded_images = st.file_uploader(

@@ -49,13 +49,13 @@ class AgentConfigurations:
 
     def build_configuration_form(
         self,
-        agent_name: Literal["extractor", "plotter"],
+        agent_name: Literal["data_extractor", "analyser"],
     ) -> None:
         """
         Builds the agent configuration form for the Streamlit app.
         Allows users to configure agent settings (system prompt and model params).
 
-        :param agent_name: Name of the agent ("extractor" or "plotter").
+        :param agent_name: Name of the agent ("data_extractor" or "analyser").
         """
         st.subheader(f"{agent_name.capitalize()} Configuration")
         config = self._request_be.get(
@@ -63,6 +63,7 @@ class AgentConfigurations:
             params={"config_name": agent_name},
             data_type=None,
         )
+        print("Agent name: ", agent_name, " MCP Server: ", config["mcp_servers"])
 
         system_prompt = st.text_area(
             "System Prompt",
@@ -90,6 +91,7 @@ class AgentConfigurations:
                     if config.get("model", "qwen-7b") in ollama_models
                     else ollama_models[0]
                 ),
+                key=f"ollama_model_selectbox_{agent_name}",
             )
         else:
             model = st.text_input(
@@ -137,7 +139,7 @@ class AgentConfigurations:
                 "system_prompt_user": system_prompt,
                 "model": model,
                 "model_provider": model_provider,
-                "mcp_server": mcp_servers,
+                "mcp_servers": mcp_servers,
             }
 
             success = self._request_be.post(
@@ -155,11 +157,13 @@ class AgentConfigurations:
             st.session_state[f"save_configuration_{agent_name}"] = False
             st.success(f"Configuration for {agent_name} saved successfully.")
 
-    def build_reset_button(self, agent_name: Literal["extractor", "plotter"]) -> None:
+    def build_reset_button(
+        self, agent_name: Literal["data_extractor", "analyser"]
+    ) -> None:
         """
         Builds a reset button for the agent configuration.
 
-        :param agent_name: Name of the agent ("extractor" or "plotter").
+        :param agent_name: Name of the agent ("data_extractor" or "analyser").
         """
         reset_button = st.button(
             "Reset Configuration",
@@ -186,7 +190,7 @@ class AgentConfigurations:
         """
         Builds the agent configuration page for the Streamlit app.
         """
-        for agent_name in ["extractor", "plotter"]:
+        for agent_name in ["data_extractor", "analyser"]:
             with st.container(border=True):
                 with st.container(border=True):
                     self.build_configuration_form(agent_name=agent_name)

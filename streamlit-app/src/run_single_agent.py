@@ -10,19 +10,18 @@ class SingleAgent(ParentRun):
 
     def build_extractor_widget(self) -> None:
         """
-        Builds the Streamlit widget to run the Extractor Agent in single mode.
+        Builds the Streamlit widget to run the Data Extractor Agent in single mode.
         """
-        files_uploaded = self.build_upload_widget("extractor_agent")
+        files_uploaded = self.build_upload_widget("data_extractor_agent")
         user_prompt = st.text_area(
-            "Enter your prompt for the Extractor Agent...",
+            "Enter your prompt for the Data Extractor Agent...",
             height=300,
         )
 
-        submit_button = st.button("Run Extractor Agent")
-
+        submit_button = st.button("Run Data Extractor Agent")
         if submit_button and user_prompt and files_uploaded:
-            logger.info("Running Extractor Agent...")
-            with st.spinner("Running Extractor Agent..."):
+            logger.info("Running Data Extractor Agent...")
+            with st.spinner("Running Data Extractor Agent..."):
                 try:
                     response_json = self._request_be.post(
                         "run_single_agent",
@@ -48,7 +47,7 @@ class SingleAgent(ParentRun):
                             mime="text/csv",
                         )
                 except Exception as e:
-                    st.error(f"Error running Extractor Agent: {e}")
+                    st.error(f"Error running Data Extractor Agent: {e}")
                     return
         elif st.session_state.get("df") is not None:
             st.dataframe(st.session_state["df"].head())
@@ -59,11 +58,11 @@ class SingleAgent(ParentRun):
                 mime="text/csv",
             )
 
-            logger.info("Extractor Agent run completed.")
+            logger.info("Data Extractor Agent run completed.")
 
     def build_upload_data_widget(self) -> None:
         """
-        Builds the Streamlit widget to run the Plotter Agent in single mode.
+        Builds the Streamlit widget to run the Analyser Agent in single mode.
         """
         with st.form("Upload_data", clear_on_submit=True):
             uploaded_file = st.file_uploader(
@@ -91,9 +90,9 @@ class SingleAgent(ParentRun):
                 return True
             return False
 
-    def build_plotter_widget(self) -> None:
+    def build_analyser_widget(self) -> None:
         """
-        Builds the Streamlit widget to run the Plotter Agent in single mode.
+        Builds the Streamlit widget to run the Analyser Agent in single mode.
         """
         data_uploaded = self.build_upload_data_widget()
         user_prompt = st.text_area(
@@ -102,12 +101,12 @@ class SingleAgent(ParentRun):
         )
         submit_button = st.button("Generate Plot")
 
-        # Get the config file for the plotter agent and check for available tools
-        plotter_config = self._request_be.get(
+        # Get the config file for the analyser agent and check for available tools
+        analyser_config = self._request_be.get(
             "get_config",
-            {"config_name": "plotter"},
+            {"config_name": "analyser"},
         )
-        mcp_servers = plotter_config.get("mcp_servers", [])
+        mcp_servers = analyser_config.get("mcp_servers", [])
         download_tool_available = any(
             map(lambda x: "download" in str(x["args"]), mcp_servers)
         )
@@ -120,7 +119,7 @@ class SingleAgent(ParentRun):
                         "run_single_agent",
                         {
                             "user_prompt": user_prompt,
-                            "agent_name": "plotter",
+                            "agent_name": "analyser",
                         },
                         payload_type="data",
                     )
@@ -169,14 +168,14 @@ class SingleAgent(ParentRun):
         """
         select_agent = st.selectbox(
             "Select AI Agent",
-            options=["Extractor", "Plotter"],
+            options=["Data Extractor", "Analyser"],
             index=0,
         )
 
-        if select_agent == "Extractor":
+        if select_agent == "Data Extractor":
             self.build_extractor_widget()
-        elif select_agent == "Plotter":
-            self.build_plotter_widget()
+        elif select_agent == "Analyser":
+            self.build_analyser_widget()
         else:
             st.error("Invalid agent selected.")
 
