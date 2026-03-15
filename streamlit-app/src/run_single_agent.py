@@ -101,17 +101,13 @@ class SingleAgent(ParentRun):
         )
         submit_button = st.button("Generate Plot")
 
-        # Get the config file for the analyser agent and check for available tools
-        analyser_config = self._request_be.get(
-            "get_config",
-            {"config_name": "analyser"},
-        )
-        mcp_servers = analyser_config.get("mcp_servers", [])
-        download_tool_available = any(
-            map(lambda x: "download" in str(x["args"]), mcp_servers)
-        )
-
-        if user_prompt and submit_button and (data_uploaded or download_tool_available):
+        if user_prompt and submit_button:
+            if not data_uploaded:
+                st.warning(
+                    "No data file was uploaded."
+                    "Download agent will try to download data based on prompt "
+                    "requirements, but this may lead to errors if not done correctly."
+                )
             with st.spinner("Generating plot..."):
                 try:
                     # Send request to backend to generate plot
