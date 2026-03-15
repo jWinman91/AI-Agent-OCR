@@ -63,6 +63,7 @@ class OrchestratorResponse(BaseModel):
     """
 
     analyser_prompt: str
+    data_download_prompt: str
     data_extractor_prompt: DataExtractorPrompt
     error_message: str | None = None
 
@@ -75,6 +76,15 @@ class AnalyserResponse(BaseModel):
     df_file_path: str | None
     plot_path: str | None
     code_summary: str
+    error_message: str | None = None
+
+
+class DataDownloadResponse(BaseModel):
+    """
+    Response model for the data download agent.
+    """
+
+    data_file_stored: str
     error_message: str | None = None
 
 

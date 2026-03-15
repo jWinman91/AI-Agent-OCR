@@ -5,7 +5,7 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from loguru import logger
-from src.agents_runner import AgentRunner
+from src.agents.agents_runner import AgentRunner
 from src.config_builder import ConfigBuilder
 from src.file_manager import FileManager
 from src.preprocessor import Preprocessor
@@ -202,6 +202,7 @@ class AiAgentOcrApp:
                 try:
                     analyser_res = await self.ai_agent_runner.run_analyser(
                         user_prompt=user_prompt,
+                        data_download_prompt=None,
                         system_prompt_args={
                             "data_file_path": self._data_file_path,
                             "output_dir": output_dir,
