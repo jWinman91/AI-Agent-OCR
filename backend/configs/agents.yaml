@@ -38,9 +38,6 @@ analyser:
   model_provider: "ollama"
   temperature: 0.01
   top_p: 1
-  mcp_servers:
-    - command: "python"
-      args: ["src/server/plot_mcp_server.py"]
   system_prompt_user: |
     **ANALYSIS TASK**
       - If the user prompt requests data analysis, perform the necessary computations

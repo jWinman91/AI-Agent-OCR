@@ -73,6 +73,15 @@ class AnalyserResponse(BaseModel):
     Response model for the analyser agent.
     """
 
+    code: str
+    code_summary: str
+
+
+class AnalyserResult(BaseModel):
+    """
+    Response model for the analyser agent.
+    """
+
     df_file_path: str | None
     plot_path: str | None
     code_summary: str
