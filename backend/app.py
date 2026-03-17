@@ -39,7 +39,7 @@ class AiAgentOcrApp:
 
         # MUTUABLE STATES
         self._image_urls = []
-        self._data_file_path = ""
+        self._data_file_path = None
 
         self.CONFIG_BUILDER = ConfigBuilder(agent_config_path)
         self.FILE_MANAGER = FileManager(
@@ -220,7 +220,7 @@ class AiAgentOcrApp:
                     )
 
                 # Reset data file path after use
-                self._data_file_path = ""
+                self._data_file_path = None
 
                 return AgentResult(
                     data_file_path=analyser_res.df_file_path,
