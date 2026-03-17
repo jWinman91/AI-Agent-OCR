@@ -9,6 +9,7 @@ from pydantic_ai import Agent
 from src.utils.data_models import (
     AgentResponse,
     AnalyserResponse,
+    DataDownloadResponse,
     DataExtractorResponse,
     FixJsonResult,
     OrchestratorResponse,
@@ -164,14 +165,20 @@ class OutputValidator:
         """
         Attempts to parse the output using different models in order of preference.
         """
-        for model in [
+        models = [
             DataExtractorResponse,
             OrchestratorResponse,
             AnalyserResponse,
             FixJsonResult,
-        ]:
+            DataDownloadResponse,
+        ]
+
+        for model in models:
             try:
                 return model(**parsed_output)
             except ValidationError:
                 continue
-        raise ValueError("Could not parse output: no valid model matched.")
+
+        raise ValueError(
+            f"Could not parse output: no valid model matched from models: {models}."
+        )

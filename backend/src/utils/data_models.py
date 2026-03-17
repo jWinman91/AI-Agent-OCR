@@ -73,7 +73,7 @@ class AnalyserResponse(BaseModel):
     Response model for the analyser agent.
     """
 
-    code: str
+    python_code: str
     code_summary: str
 
 
@@ -107,7 +107,11 @@ class FixJsonResult(BaseModel):
 
 
 AgentResponse = (
-    DataExtractorResponse | OrchestratorResponse | AnalyserResponse | FixJsonResult
+    DataExtractorResponse
+    | OrchestratorResponse
+    | AnalyserResponse
+    | FixJsonResult
+    | DataDownloadResponse
 )
 
 
