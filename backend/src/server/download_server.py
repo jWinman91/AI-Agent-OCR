@@ -1,17 +1,14 @@
 from typing import Optional
-from urllib.parse import urlparse
 
-import requests
+import pandas as pd
 import yfinance as yf
-from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
-
-# FastMCP server to download data from different APIs
-app = FastMCP("FastMCP Server to download data")
 
 
 class YFinanceRequest(BaseModel):
-    symbol: str = Field(..., description="Ticker symbol, e.g. AAPL")
+    share_name: str = Field(
+        ..., description="Name of the share to download data for, e.g. 'E.ON'"
+    )
     period: Optional[str] = Field(
         "1mo", description="Data period, e.g. 1d, 5d, 1mo, 1y"
     )
@@ -20,113 +17,101 @@ class YFinanceRequest(BaseModel):
     end: Optional[str] = Field(None, description="End date YYYY-MM-DD")
 
 
-class ProxyRequest(BaseModel):
-    url: str
-    method: Optional[str] = "GET"
-    params: Optional[dict] = None
-    headers: Optional[dict] = None
-    json_field: Optional[dict] = None
-    timeout: Optional[float] = 10.0
-
-
-# Restrict proxy to known data provider hosts to avoid becoming an open proxy
-ALLOWED_HOSTS = {
-    "query1.finance.yahoo.com",
-    "finance.yahoo.com",
-    "www.alphavantage.co",
-    "alphavantage.co",
-    "finnhub.io",
-    "api.tiingo.com",
-    "api.coincap.io",
-    "api.coingecko.com",
-}
-
-
 def safe_filename(name: str) -> str:
     return name.replace("/", "_").replace("\\", "_")
 
 
-@app.tool()
-def download_yfinance(req: YFinanceRequest, file_name: str) -> dict[str, str]:
+def resolve_ticker(symbol: str) -> str:
+    s = yf.Search(symbol)
+    if not s.quotes:
+        raise ValueError(f"No ticker found for symbol: {symbol}")
+    return s.quotes[0]["symbol"]
+
+
+def download_yfinance(reqs: list[YFinanceRequest], file_name: str) -> str:
     """
     Download historical market data from Yahoo Finance and save to CSV.
 
-    param req: YFinanceRequest object with parameters for data retrieval
-    param file_name: Name of the CSV file to save data (must end with .csv
-    return: dict with path to stored data file or error message
+    Output format:
+        Date,
+        EOAN.DE_Open,
+        EOAN.DE_High,
+        EOAN.DE_Low,
+        EOAN.DE_Close,
+        EOAN.DE_Volume,
+        AAPL_Open,
+        AAPL_High,
+        ...
+
+    Each row corresponds to a datetime.
     """
+
     if not file_name.endswith(".csv"):
-        return {"error": "file_name MUST end with .csv"}
+        raise ValueError("file_name MUST end with .csv")
 
     file_path = f"data/{safe_filename(file_name)}"
-    try:
-        ticker = yf.Ticker(req.symbol)
-        # prefer history with explicit start/end if provided, otherwise period
+
+    dfs = []
+
+    for req in reqs:
+        ticker_symbol = resolve_ticker(req.share_name)
+
+        ticker = yf.Ticker(ticker_symbol)
+
         if req.start or req.end:
-            df = ticker.history(interval=req.interval, start=req.start, end=req.end)
+            df = ticker.history(
+                interval=req.interval,
+                start=req.start,
+                end=req.end,
+            )
         else:
-            df = ticker.history(period=req.period, interval=req.interval)
+            df = ticker.history(
+                period=req.period,
+                interval=req.interval,
+            )
 
         if df.empty:
-            return {"error": "No data returned for given parameters."}
+            raise ValueError(
+                f"No data returned for '{req.share_name}' ({ticker_symbol})"
+            )
 
-        df.to_csv(file_path)
-        return {"data_file_stored": file_path}
-    except Exception as e:
-        return {"error": str(e)}
+        # Remove timezone information to ensure alignment
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_localize(None)
+
+        # Prefix all columns with ticker symbol
+        df = df.add_prefix(f"{ticker_symbol}_")
+
+        dfs.append(df)
+
+    # Outer join keeps all timestamps from all securities
+    combined_df = pd.concat(dfs, axis=1, join="outer")
+
+    combined_df.index.name = "Date"
+
+    # Sort chronologically
+    combined_df.sort_index(inplace=True)
+
+    # Optional: remove rows where every column is NaN
+    combined_df.dropna(how="all", inplace=True)
+
+    combined_df.to_csv(file_path)
+
+    return file_path
 
 
-@app.tool()
-def proxy_request(req: ProxyRequest, file_name: str) -> dict[str, str]:
+def handle_data_download(
+    reqs: list[YFinanceRequest],
+    file_name: str,
+) -> str:
     """
-    Make a proxy HTTP request to download data and save to CSV.
+    Handle a data download request, either from Yahoo Finance or via proxy.
 
-    param req: ProxyRequest object with parameters for the HTTP request
+    param reqs: List of YFinanceRequest objects with parameters for the request
     param file_name: Name of the CSV file to save data (must end with .csv)
-    return: dict with path to stored data file or error message
+    return: Path to the stored data file
     """
-    parsed = urlparse(req.url)
-    hostname = parsed.hostname or ""
-
-    if hostname not in ALLOWED_HOSTS:
-        return {"error": f"Host {hostname} not allowed"}
-
-    if not file_name.endswith(".csv"):
-        return {"error": "file_name MUST end with .csv"}
-
-    file_path = f"data/{safe_filename(file_name)}"
-
-    try:
-        resp = requests.request(
-            method=req.method.upper(),
-            url=req.url,
-            params=req.params,
-            headers=req.headers,
-            json=req.json_field,
-            timeout=req.timeout,
-            stream=True,
-        )
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        return {"error": str(e)}
-
-    with open(file_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
-
-    return {"file_path": file_path}
-
-
-@app.tool()
-def allowed_hosts() -> dict[str, list[str]]:
-    """
-    Return the list of allowed hosts for proxy requests.
-
-    return: dict with list of allowed hosts
-    """
-    return {"allowed_hosts_for_proxy_request": sorted(list(ALLOWED_HOSTS))}
-
-
-if __name__ == "__main__":
-    app.run(transport="stdio")
+    if all(isinstance(req, YFinanceRequest) for req in reqs):
+        return download_yfinance(reqs, file_name)
+    else:
+        raise ValueError("Invalid request type")
