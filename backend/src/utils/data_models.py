@@ -1,8 +1,10 @@
 from typing import Any, Optional
 
 from pydantic import BaseModel
+from src.server.download_server import YFinanceRequest
 
 
+# Config models
 class ConfigModelBase(BaseModel):
     """
     Base configuration model including only base infos.
@@ -39,15 +41,7 @@ class ConfigModelDB(ConfigModelUser):
     system_prompt_template: str
 
 
-class DataExtractorResponse(BaseModel):
-    """
-    Response model for the data extractor agent.
-    """
-
-    data: dict[str, Any]
-    error_message: str | None = None
-
-
+# Prompt model for the data extractor agent
 class DataExtractorPrompt(BaseModel):
     """
     Prompt model for the data extractor agent.
@@ -55,6 +49,16 @@ class DataExtractorPrompt(BaseModel):
 
     user_prompt: str
     json_details: dict[str, Any]
+
+
+# Response models for the LLM agents
+class DataExtractorResponse(BaseModel):
+    """
+    Response model for the data extractor agent.
+    """
+
+    data: dict[str, Any]
+    error_message: str | None = None
 
 
 class OrchestratorResponse(BaseModel):
@@ -77,27 +81,16 @@ class AnalyserResponse(BaseModel):
     code_summary: str
 
 
-class AnalyserResult(BaseModel):
-    """
-    Response model for the analyser agent.
-    """
-
-    df_file_path: str | None
-    plot_path: str | None
-    code_summary: str
-    error_message: str | None = None
-
-
 class DataDownloadResponse(BaseModel):
     """
     Response model for the data download agent.
     """
 
-    data_file_stored: str
-    error_message: str | None = None
+    download_request: list[YFinanceRequest]
+    file_name: str
 
 
-class FixJsonResult(BaseModel):
+class FixJsonResponse(BaseModel):
     """
     Response model for the fix/repair JSON agent.
     """
@@ -110,9 +103,30 @@ AgentResponse = (
     DataExtractorResponse
     | OrchestratorResponse
     | AnalyserResponse
-    | FixJsonResult
+    | FixJsonResponse
     | DataDownloadResponse
 )
+
+
+# Result models after execution of the agents
+class AnalyserResult(BaseModel):
+    """
+    Response model for the analyser agent.
+    """
+
+    df_file_path: str | None
+    plot_path: str | None
+    code_summary: str
+    error_message: str | None = None
+
+
+class DataDownloadResult(BaseModel):
+    """
+    Result model for the data download agent.
+    """
+
+    data_file_path: str | None
+    error_message: str | None = None
 
 
 class AgentResult(BaseModel):
