@@ -1,3 +1,4 @@
+import argparse
 import os
 from typing import List, Literal
 
@@ -18,15 +19,15 @@ from src.utils.data_models import (
 class AiAgentOcrApp:
     def __init__(
         self,
-        ip: str = "127.0.0.1",
-        port: int = 8000,
+        ip: str,
+        port: int,
         data_dir: str = "data",
         output_dir: str = "plots",
         image_dir: str = "images",
         agent_config_path: str = "configs/agents.yaml",
     ) -> None:
         """
-        Initializes the PlotAgentApp with the given parameters.
+        Initializes the AiAgentOcrApp with the given parameters.
 
         :param ip: IP address to bind the server
         :param port: Port to bind the server
@@ -39,7 +40,7 @@ class AiAgentOcrApp:
 
         # MUTUABLE STATES
         self._image_urls = []
-        self._data_file_path = ""
+        self._data_file_path = None
 
         self.CONFIG_BUILDER = ConfigBuilder(agent_config_path)
         self.FILE_MANAGER = FileManager(
@@ -220,7 +221,7 @@ class AiAgentOcrApp:
                     )
 
                 # Reset data file path after use
-                self._data_file_path = ""
+                self._data_file_path = None
 
                 return AgentResult(
                     data_file_path=analyser_res.df_file_path,
@@ -363,5 +364,59 @@ class AiAgentOcrApp:
 
 
 if __name__ == "__main__":
-    app = AiAgentOcrApp()
+    arguments = [
+        {
+            "name_or_flags": "--ip",
+            "type": str,
+            "default": "127.0.0.1",
+            "help": "IP address to run the app on",
+        },
+        {
+            "name_or_flags": "--port",
+            "type": int,
+            "default": 8000,
+            "help": "Port to run the app on",
+        },
+        {
+            "name_or_flags": "--data_dir",
+            "type": str,
+            "default": "data",
+            "help": "Directory to store data files",
+        },
+        {
+            "name_or_flags": "--output_dir",
+            "type": str,
+            "default": "plots",
+            "help": "Directory to store output plots",
+        },
+        {
+            "name_or_flags": "--image_dir",
+            "type": str,
+            "default": "images",
+            "help": "Directory to store image files",
+        },
+        {
+            "name_or_flags": "--agent_config_path",
+            "type": str,
+            "default": "configs/agents.yaml",
+            "help": "Path to the agent configuration file",
+        },
+    ]
+
+    parser = argparse.ArgumentParser(description="Run AI Agent OCR Backend App")
+    for arg in arguments:
+        name_or_flags = arg["name_or_flags"]
+        options = {k: v for k, v in arg.items() if k != "name_or_flags"}
+        parser.add_argument(name_or_flags, **options)
+
+    args = parser.parse_args()
+
+    app = AiAgentOcrApp(
+        ip=args.ip,
+        port=args.port,
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        image_dir=args.image_dir,
+        agent_config_path=args.agent_config_path,
+    )
     app.run()

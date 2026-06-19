@@ -7,11 +7,18 @@ import pandas as pd
 from loguru import logger
 from PIL import Image
 from src.agents.agents_factory import AgentsFactory
+from src.server.download_server import (
+    YFinanceRequest,
+    handle_data_download,
+)
+from src.server.plot_server import execute_python_code, get_dataset_metadata
 from src.utils.data_models import (
     AgentResult,
     AnalyserResponse,
+    AnalyserResult,
     ConfigModelBuild,
     DataDownloadResponse,
+    DataDownloadResult,
     DataExtractorPrompt,
     DataExtractorResponse,
     OrchestratorResponse,
@@ -108,7 +115,9 @@ class AgentRunner:
         )
 
     async def run_orchestrator(
-        self, user_prompt: str, system_prompt_args: dict[str, Any] | None = None
+        self,
+        user_prompt: str,
+        system_prompt_args: dict[str, Any] | None = None,
     ) -> OrchestratorResponse:
         """
         Runs the orchestrator agent to determine extraction and plotting instructions.
@@ -249,12 +258,64 @@ class AgentRunner:
             orchestrator_res.data_download_prompt,
         )
 
+    async def run_downloader(
+        self,
+        data_download_prompt: str,
+        system_prompt_args: dict[str, str],
+    ) -> DataDownloadResponse:
+        """
+        Runs the data downloader agent based on the provided prompt.
+
+        :param data_download_prompt: The prompt to provide to the data downloader.
+        :return: The response from the data downloader agent.
+        """
+        # Create data_downloader agent based on orchestrator's instructions
+        data_downloader = self.agents.create_agent(
+            agent_name="data_downloader",
+            config=self.CONFIG["data_downloader"],
+            output_type=DataDownloadResponse,
+            system_prompt_args=system_prompt_args,
+        )
+        data_downloader_res = await self.agents.run_agent(
+            agent=data_downloader,
+            user_prompt=data_download_prompt,
+            output_type_example=DataDownloadResponse(
+                file_name="str",
+                download_request=[
+                    YFinanceRequest(
+                        share_name="E.ON",
+                        period="1mo",
+                        interval="1d",
+                        start=None,
+                        end=None,
+                    )
+                ],
+            ),
+        )
+
+        try:
+            file_path = handle_data_download(
+                reqs=data_downloader_res.download_request,
+                file_name=data_downloader_res.file_name,
+            )
+            error_message = None
+            return DataDownloadResult(
+                data_file_path=file_path,
+                error_message=error_message,
+            )
+        except ValueError as e:
+            logger.error(f"Error in data downloader: {str(e)}")
+            return DataDownloadResult(
+                data_file_path=None,
+                error_message=str(e),
+            )
+
     async def run_analyser(
         self,
         user_prompt: str,
         data_download_prompt: str | None,
-        system_prompt_args: dict,
-    ) -> AnalyserResponse:
+        system_prompt_args: dict[str, str],
+    ) -> AnalyserResult:
         """
         Runs the analyser agent to generate plots based on extracted data.
 
@@ -264,40 +325,42 @@ class AgentRunner:
         :param system_prompt_args: Additional arguments for the system prompt.
         :return: The analyser's response containing plot details.
         """
+        # If orchestrator or user did not provide a specific data download prompt,
+        # run it to get one
         if data_download_prompt is None:
             orchestrator_res = await self.run_orchestrator(user_prompt=user_prompt)
             user_prompt = orchestrator_res.analyser_prompt
             data_download_prompt = orchestrator_res.data_download_prompt
 
+        # If data download prompt provided, run downloader agent to get data
+        # else set downloaded_data_file_path to None in system prompt args for analyser
         if data_download_prompt != "":
-            data_downloader = self.agents.create_agent(
-                agent_name="data_downloader",
-                config=self.CONFIG["data_downloader"],
-                output_type=DataDownloadResponse,
+            data_download_res = await self.run_downloader(
+                data_download_prompt=data_download_prompt,
+                system_prompt_args=system_prompt_args,
             )
-            data_downloader_res = await self.agents.run_agent(
-                agent=data_downloader,
-                user_prompt=data_download_prompt,
-                output_type_example=DataDownloadResponse(
-                    data_file_stored="str",
-                    error_message="null or error message",
-                ),
-            )
-            if (
-                data_downloader_res.error_message
-                and data_downloader_res.error_message != ""
-            ):
-                logger.error(
-                    f"Error in data downloader: {data_downloader_res.error_message}"
-                )
-                raise ValueError(
-                    f"Error in data downloader: {data_downloader_res.error_message}"
-                )
             system_prompt_args["downloaded_data_file_path"] = (
-                data_downloader_res.data_file_stored
+                data_download_res.data_file_path
             )
+
+            # If error in data downloader, return error message in analyser result
+            if data_download_res.error_message:
+                return AnalyserResult(
+                    df_file_path=None,
+                    plot_path=None,
+                    code_summary="",
+                    error_message=data_download_res.error_message,
+                )
         else:
             system_prompt_args["downloaded_data_file_path"] = None
+
+        # Add dataset metadata to system prompt args for analyser
+        system_prompt_args["dataset_metadata"] = get_dataset_metadata(
+            system_prompt_args["data_file_path"]
+        )
+        system_prompt_args["downloaded_dataset_metadata"] = get_dataset_metadata(
+            system_prompt_args["downloaded_data_file_path"]
+        )
 
         # Create analyser agent based on orchestrator's instructions
         analyser = self.agents.create_agent(
@@ -306,16 +369,27 @@ class AgentRunner:
             output_type=AnalyserResponse,
             system_prompt_args=system_prompt_args,
         )
-        return await self.agents.run_agent(
+
+        analyser_res = await self.agents.run_agent(
             agent=analyser,
             user_prompt=user_prompt,
             output_type_example=AnalyserResponse(
-                df_file_path="str",
-                plot_path="str",
-                tool_used="str",
+                python_code="str",
                 code_summary="str",
-                error_message="null or error message",
             ),
+        )
+
+        code_res = execute_python_code(
+            code=analyser_res.python_code,
+            data_file_path=system_prompt_args["data_file_path"],
+            downloaded_data_file_path=system_prompt_args["downloaded_data_file_path"],
+        )
+
+        return AnalyserResult(
+            df_file_path=code_res["df_file_path"],
+            plot_path=code_res["plot_path"],
+            code_summary=analyser_res.code_summary,
+            error_message=code_res["error_message"],
         )
 
     async def run_ai_ocr_agents(

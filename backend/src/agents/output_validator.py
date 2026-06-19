@@ -9,8 +9,9 @@ from pydantic_ai import Agent
 from src.utils.data_models import (
     AgentResponse,
     AnalyserResponse,
+    DataDownloadResponse,
     DataExtractorResponse,
-    FixJsonResult,
+    FixJsonResponse,
     OrchestratorResponse,
 )
 
@@ -39,7 +40,7 @@ class OutputValidator:
         self.AGENT = create_agent_func(
             agent_name="fix_json",
             config=config,
-            output_type=FixJsonResult,
+            output_type=FixJsonResponse,
         )
         self._run_agent_func = run_agent_func
 
@@ -88,11 +89,11 @@ class OutputValidator:
                     }
                 ),
             )
-            if type(fixed_json) is not FixJsonResult and type(fixed_json) is str:
-                fixed_json = FixJsonResult(
+            if type(fixed_json) is not FixJsonResponse and type(fixed_json) is str:
+                fixed_json = FixJsonResponse(
                     **await self.parse_json(
                         fixed_json,
-                        FixJsonResult(
+                        FixJsonResponse(
                             fixed_json="text",
                             error_message=None,
                         ),
@@ -113,7 +114,10 @@ class OutputValidator:
                 )
 
     async def validate_output(
-        self, agent_response: str, agent_name: str, expected_json: AgentResponse
+        self,
+        agent_response: str,
+        agent_name: str,
+        expected_json: AgentResponse,
     ) -> AgentResponse:
         """
         Validates the output of an agent against the expected Pydantic model.
@@ -123,6 +127,13 @@ class OutputValidator:
         :param expected_json: The expected JSON structure as a Pydantic model.
         :return: The validated agent response as a Pydantic model.
         """
+        # Special handling for AnalyserResponse which contains code
+        if type(expected_json) is AnalyserResponse:
+            return AnalyserResponse(
+                python_code=self.extract_tag("CODE", agent_response),
+                code_summary=self.extract_tag("SUMMARY", agent_response),
+            )
+
         parsed_output = await self.parse_json(
             text=agent_response,
             expected_json=expected_json,
@@ -164,14 +175,32 @@ class OutputValidator:
         """
         Attempts to parse the output using different models in order of preference.
         """
-        for model in [
+        models = [
             DataExtractorResponse,
             OrchestratorResponse,
-            AnalyserResponse,
-            FixJsonResult,
-        ]:
+            FixJsonResponse,
+            DataDownloadResponse,
+        ]
+
+        for model in models:
             try:
                 return model(**parsed_output)
             except ValidationError:
                 continue
-        raise ValueError("Could not parse output: no valid model matched.")
+
+        raise ValueError(
+            f"Could not parse output: no valid model matched from models: {models}."
+        )
+
+    @staticmethod
+    def extract_tag(tag: str, text: str) -> str | None:
+        """
+        Extracts content from a specific tag in the text.
+
+        :param tag: The tag to extract content from.
+        :param text: The text to search within.
+        :return: The content within the specified tag, or None if not found.
+        """
+        pattern = rf"<{tag}>(.*?)</{tag}>"
+        match = re.search(pattern, text, re.DOTALL)
+        return match.group(1).strip() if match else None
