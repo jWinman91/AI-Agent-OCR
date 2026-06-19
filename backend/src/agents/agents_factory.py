@@ -4,7 +4,6 @@ from typing import Any, Dict
 
 from loguru import logger
 from pydantic_ai import Agent, BinaryContent
-from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from src.agents.output_validator import OutputValidator
@@ -90,18 +89,6 @@ class AgentsFactory:
         else:
             cfg["model"] = f"{model_provider}:{cfg['model']}"
 
-        # set MCP server if necessary
-        mcp_servers_cfg = cfg.pop("mcp_servers", None)
-        if mcp_servers_cfg is not None:
-            mcp_servers = []
-            for mcp_server_cfg in mcp_servers_cfg:
-                mcp_server = MCPServerStdio(**mcp_server_cfg)
-                mcp_servers.append(mcp_server)
-            cfg["toolsets"] = mcp_servers
-            logger.info(
-                f"Configured MCP servers for agent {agent_name} and model"
-                f" {cfg['model']}: {cfg['toolsets']}"
-            )
         agent = Agent(**cfg)
         agent.name = agent_name
         return agent
