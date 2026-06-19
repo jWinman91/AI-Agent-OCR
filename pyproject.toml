@@ -24,6 +24,12 @@ dependencies = [
   "pyyaml",
   "multipledispatch",
   "yfinance",
+  "seaborn",
+  "matplotlib",
+  "neuralprophet>=1.0.0rc10",
+  "numpy",
+  "statsmodels",
+  "scikit-learn",
 ]
 
 [project.optional-dependencies]
