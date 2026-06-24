@@ -1,13 +1,14 @@
 import logging
 import time
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Callable, Dict
 
 from loguru import logger
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from src.agents.output_validator import OutputValidator
-from src.utils.data_models import AgentResponse, ConfigModelBuild
+from src.utils.data_models import AgentResponse, AgentResult, ConfigModelBuild
 
 logging.basicConfig(level=logging.INFO)
 
@@ -98,8 +99,9 @@ class AgentsFactory:
         agent: Agent,
         output_type_example: AgentResponse,
         user_prompt: str,
-        image_url: str | None = None,
-    ) -> AgentResponse:
+        image_url: str | Path | None = None,
+        tool_execution_func: Callable[[AgentResponse], Any] | None = None,
+    ) -> AgentResult:
         """
         Runs an agent with the given user prompt and optional image.
 
@@ -107,11 +109,13 @@ class AgentsFactory:
         :param output_type_example: Example of the expected output type for validation.
         :param user_prompt: The user prompt to provide to the agent.
         :param image_url: Optional path to an image file to provide to the agent.
+        param tool_execution_func: Optional function to execute tools
         :return: The agent's response, validated explicitly if it's a string output.
         """
         t0 = time.time()
         if image_url is not None:
-            with open(image_url, "rb") as f:
+            image_path = Path(image_url)
+            with image_path.open("rb") as f:
                 file_content = f.read()
             binary_content = BinaryContent(
                 data=file_content,
@@ -134,8 +138,16 @@ class AgentsFactory:
         )
 
         if type(response.output) is str:
-            return await self.OUTPUT_VALIDATOR.validate_output(
+            structured_output = await self.OUTPUT_VALIDATOR.validate_output(
                 response.output, agent.name if agent.name else "", output_type_example
             )
         else:
-            return response.output
+            structured_output = response.output
+
+        # execute tools if tool execution function is given
+        # NOTE: the tool execution function will always return a result,
+        # error handling should be done inside the tool execution function
+        if tool_execution_func is not None:
+            return tool_execution_func(structured_output)
+        else:
+            return structured_output

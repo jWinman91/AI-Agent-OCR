@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -87,7 +88,7 @@ class DataDownloadResponse(BaseModel):
     """
 
     download_request: list[YFinanceRequest]
-    file_name: str
+    file_name: Path
 
 
 class FixJsonResponse(BaseModel):
@@ -114,8 +115,8 @@ class AnalyserResult(BaseModel):
     Response model for the analyser agent.
     """
 
-    df_file_path: str | None
-    plot_path: str | None
+    df_file_path: Path | None
+    plot_path: Path | None
     code_summary: str
     error_message: str | None = None
 
@@ -125,15 +126,19 @@ class DataDownloadResult(BaseModel):
     Result model for the data download agent.
     """
 
-    data_file_path: str | None
+    data_file_path: Path | None
     error_message: str | None = None
 
 
-class AgentResult(BaseModel):
+class DataExtractorResult(BaseModel):
     """
-    Result model for the agent.
+    Result model for the data extractor agent.
     """
 
-    plot_path: str | None = None
-    code_summary: str | None = None
-    data_file_path: str | None = None
+    data_file_path: Path | None
+    error_message: str | None = None
+
+
+AgentResult = (
+    DataExtractorResponse | OrchestratorResponse | AnalyserResult | DataDownloadResult
+)

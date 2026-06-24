@@ -261,11 +261,7 @@ orchestrator:
     - Always ensure that the data downloader prompt is specific and actionable for the data downloader agent.
 
     ERROR CONTEXT (may be empty)
-    Previous extractor errors:
-    {previous_errors_data_extractor}
-
-    Previous analyser errors:
-    {previous_errors_analyser}
+    {previous_error}
 
     ERROR HANDLING RULES
     - If extractor or analyser failed before:

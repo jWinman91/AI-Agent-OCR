@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 from string import Template
 from typing import Any, Dict
 
@@ -11,11 +11,11 @@ class ConfigBuilder:
     SYSTEM_PROMPT = "system_prompt"
     USER_PROMPT = "system_prompt_user"
     PROMPT_TEMPLATE = "system_prompt_template"
-    CONFIG_DB_PATH = "config.db"
+    CONFIG_DB_PATH = Path("config.db")
 
     def __init__(
         self,
-        config_file_path: str,
+        config_file_path: Path,
         table_name: str = "configs",
     ) -> None:
         """
@@ -24,7 +24,7 @@ class ConfigBuilder:
         :param config_file_path: Path to the YAML configuration file.
         :param table_name: Name of the database table to store configurations.
         """
-        config_already_exists = os.path.exists(self.CONFIG_DB_PATH)
+        config_already_exists = self.CONFIG_DB_PATH.exists()
         self.SQLITE_HANDLER = sqlite_db_handler.SqliteDBHandler(table_name)
         self.CONFIG_TEMPLATE = self._load_yaml(config_file_path)
 
@@ -33,7 +33,7 @@ class ConfigBuilder:
                 self.write_config_to_db(config_name, ConfigModelDB(**config))
 
     @staticmethod
-    def _load_yaml(config_path: str) -> Dict[str, Any]:
+    def _load_yaml(config_path: Path) -> Dict[str, Any]:
         """
         Loads in a system prompt (and additional parameters) for the LLM and returns
         them as a tuple.
@@ -41,7 +41,7 @@ class ConfigBuilder:
         :param config_path: path to yaml file
         :return: Tuple containing the system prompt and additional parameters
         """
-        with open(config_path, "r") as file:
+        with config_path.open("r") as file:
             config = yaml.safe_load(file)
         if config is None:
             return {}

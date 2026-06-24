@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 from typing import List, Literal
 
 import uvicorn
@@ -21,10 +22,10 @@ class AiAgentOcrApp:
         self,
         ip: str,
         port: int,
-        data_dir: str = "data",
-        output_dir: str = "plots",
-        image_dir: str = "images",
-        agent_config_path: str = "configs/agents.yaml",
+        data_dir: Path = Path("data"),
+        output_dir: Path = Path("plots"),
+        image_dir: Path = Path("images"),
+        agent_config_path: Path = Path("configs/agents.yaml"),
     ) -> None:
         """
         Initializes the AiAgentOcrApp with the given parameters.
@@ -39,12 +40,14 @@ class AiAgentOcrApp:
         self.PORT = port
 
         # MUTUABLE STATES
-        self._image_urls = []
-        self._data_file_path = None
+        self._image_urls: list[Path] = []
+        self._data_file_path: Path | None = None
 
         self.CONFIG_BUILDER = ConfigBuilder(agent_config_path)
         self.FILE_MANAGER = FileManager(
-            data_dir=data_dir, plot_dir=output_dir, image_dir=image_dir
+            data_dir=data_dir,
+            plot_dir=output_dir,
+            image_dir=image_dir,
         )
         self.FILE_MANAGER.clean_up()
         self.PREPROCESSOR = Preprocessor()
@@ -111,25 +114,6 @@ class AiAgentOcrApp:
             """
             return self.CONFIG_BUILDER.reset_config_db(config_name)
 
-        @self.app.get("/get_mcp_servers/")
-        async def get_mcp_servers() -> dict[str, List[str]]:
-            """
-            Retrieves the list of MCP servers in the src/server directory.
-
-            :return: Dictionary with the list of MCP servers
-            """
-            try:
-                server_files = os.listdir("src/server")
-                mcp_servers = [
-                    f.split("/")[-1] for f in server_files if f.endswith(".py")
-                ]
-                return {"mcp_servers": mcp_servers}
-            except Exception as e:
-                logger.error(f"Error retrieving MCP servers: {e}")
-                raise HTTPException(
-                    status_code=500, detail="Could not retrieve MCP servers"
-                )
-
         @self.app.post("/set_openai_api_key/")
         async def set_openai_api_key(api_key: str) -> bool:
             """
@@ -159,6 +143,7 @@ class AiAgentOcrApp:
         async def run_single_agent(
             user_prompt: str = Form(...),
             agent_name: Literal["data_extractor", "analyser"] = Form(...),
+            previous_error: str | None = Form(default=None),
         ) -> AgentResult:
             """
             Endpoint to run a single agent.
@@ -169,65 +154,33 @@ class AiAgentOcrApp:
             """
             if agent_name == "data_extractor":
                 # Get image URLs from the file manager
-                data_dir = self.FILE_MANAGER.get_data_dir()
                 if len(self._image_urls) == 0:
                     raise ValueError("Data extractor agent requires images to process!")
-                # Run the data extractor agent and catch ValueErrors from the LLMs
-                try:
-                    df, _ = await self.ai_agent_runner.run_data_extractor(
-                        user_prompt=user_prompt,
-                        image_urls=self._image_urls,
-                        previous_errors_data_extractor={},
-                        previous_errors_analyser={},
-                    )
-                except ValueError as e:
-                    logger.error(f"Error in data extractor: {e}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Data extractor agent failed to process your input: {e}",
-                    )
-
-                df_path = f"{data_dir}/extracted_data.csv"
-                df.to_csv(df_path, index=False)
-                return AgentResult(
-                    data_file_path=df_path,
-                    plot_path="",
-                    code_summary="",
-                    tool_used="",
+                # Run the data extractor agent
+                res = await self.ai_agent_runner.run_ai_ocr_agents(
+                    user_prompt=user_prompt,
+                    image_urls=self._image_urls,
+                    data_file_path=None,
+                    list_of_agents_to_run=["orchestrator", "data_extractor"],
+                    previous_error=previous_error,
                 )
+                # reset image URLs after use
+                self._image_urls = []
+                return res
+
             elif agent_name == "analyser":
-                # Get data file path from the file manager
-                output_dir = self.FILE_MANAGER.get_plot_dir()
-
-                # Run the analyser agent and catch ValueErrors from the LLMs
-                try:
-                    analyser_res = await self.ai_agent_runner.run_analyser(
-                        user_prompt=user_prompt,
-                        data_download_prompt=None,
-                        system_prompt_args={
-                            "data_file_path": self._data_file_path,
-                            "output_dir": output_dir,
-                        },
-                    )
-                    if analyser_res.error_message and analyser_res.error_message != "":
-                        logger.error(f"Error in analyser: {analyser_res.error_message}")
-                        raise ValueError(analyser_res.error_message)
-
-                except ValueError as e:
-                    logger.error(f"Error in analyser: {e}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Analyser agent failed to process your input: {e}",
-                    )
-
-                # Reset data file path after use
-                self._data_file_path = None
-
-                return AgentResult(
-                    data_file_path=analyser_res.df_file_path,
-                    plot_path=analyser_res.plot_path,
-                    code_summary=analyser_res.code_summary,
+                # Run the analyser agent
+                res = await self.ai_agent_runner.run_ai_ocr_agents(
+                    user_prompt=user_prompt,
+                    image_urls=[],
+                    data_file_path=self._data_file_path,
+                    list_of_agents_to_run=["orchestrator", "analyser"],
+                    previous_error=previous_error,
                 )
+
+                # reset data file path after use
+                self._data_file_path = None
+                return res
 
             else:
                 raise HTTPException(
@@ -239,28 +192,31 @@ class AiAgentOcrApp:
                 )
 
         @self.app.post("/run_agents")
-        async def run_ai_ocr_agents(user_prompt: str = Form(...)) -> AgentResult:
+        async def run_ai_ocr_agents(
+            user_prompt: str = Form(...),
+            previous_error: str | None = Form(default=None),
+        ) -> AgentResult:
             """
             Endpoint to run the agents (both Data Extractor and Analyser) in sequence.
 
             :param user_prompt: User prompt to process
             :return: Dictionary with the plot path
             """
-            try:
-                agent_result = await self.ai_agent_runner.run_ai_ocr_agents(
-                    user_prompt=user_prompt, image_urls=self._image_urls
-                )
+            agent_result = await self.ai_agent_runner.run_ai_ocr_agents(
+                user_prompt=user_prompt,
+                image_urls=self._image_urls,
+                data_file_path=None,
+                list_of_agents_to_run=[
+                    "orchestrator",
+                    "data_extractor",
+                    "analyser",
+                ],
+                previous_error=previous_error,
+            )
 
-                # Reset image URLs after use
-                self._image_urls = []
-                return agent_result
-
-            except ValueError as e:
-                logger.error(f"Error in run_agents: {e}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Your input could not be processed by the agents: {e}",
-                )
+            # Reset image URLs after use
+            self._image_urls = []
+            return agent_result
 
         @self.app.post("/uploadimages/")
         async def upload_images(
@@ -329,11 +285,12 @@ class AiAgentOcrApp:
             :param plot_path: Name of the file to download
             :return: FileResponse with the requested file
             """
-            if os.path.exists(plot_path):
+            file_path = Path(plot_path)
+            if file_path.exists() and file_path.is_file():
                 return FileResponse(
-                    plot_path,
+                    str(file_path),
                     media_type="image/png",
-                    filename=os.path.basename(plot_path),
+                    filename=file_path.name,
                 )
             else:
                 raise FileNotFoundError(f"File {plot_path} not found")
@@ -346,11 +303,12 @@ class AiAgentOcrApp:
             :param df_path: Name of the file to download
             :return: FileResponse with the requested file
             """
-            if os.path.exists(df_path):
+            file_path = Path(df_path)
+            if file_path.exists() and file_path.is_file():
                 return FileResponse(
-                    df_path,
-                    media_type="csv",
-                    filename=os.path.basename(df_path),
+                    file_path,
+                    media_type="text/csv",
+                    filename=file_path.name,
                 )
             else:
                 raise FileNotFoundError(f"File {df_path} not found")
@@ -414,9 +372,9 @@ if __name__ == "__main__":
     app = AiAgentOcrApp(
         ip=args.ip,
         port=args.port,
-        data_dir=args.data_dir,
-        output_dir=args.output_dir,
-        image_dir=args.image_dir,
-        agent_config_path=args.agent_config_path,
+        data_dir=Path(args.data_dir),
+        output_dir=Path(args.output_dir),
+        image_dir=Path(args.image_dir),
+        agent_config_path=Path(args.agent_config_path),
     )
     app.run()

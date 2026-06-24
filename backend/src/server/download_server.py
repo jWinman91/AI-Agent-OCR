@@ -1,8 +1,11 @@
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import yfinance as yf
 from pydantic import BaseModel, Field
+
+from backend.src.utils.data_models import DataDownloadResponse, DataDownloadResult
 
 
 class YFinanceRequest(BaseModel):
@@ -17,8 +20,8 @@ class YFinanceRequest(BaseModel):
     end: Optional[str] = Field(None, description="End date YYYY-MM-DD")
 
 
-def safe_filename(name: str) -> str:
-    return name.replace("/", "_").replace("\\", "_")
+def safe_filename(name: Path) -> Path:
+    return Path(str(name).replace("/", "_").replace("\\", "_"))
 
 
 def resolve_ticker(symbol: str) -> str:
@@ -28,7 +31,7 @@ def resolve_ticker(symbol: str) -> str:
     return s.quotes[0]["symbol"]
 
 
-def download_yfinance(reqs: list[YFinanceRequest], file_name: str) -> str:
+def download_yfinance(reqs: list[YFinanceRequest], file_name: Path) -> Path:
     """
     Download historical market data from Yahoo Finance and save to CSV.
 
@@ -46,10 +49,11 @@ def download_yfinance(reqs: list[YFinanceRequest], file_name: str) -> str:
     Each row corresponds to a datetime.
     """
 
-    if not file_name.endswith(".csv"):
+    if not file_name.suffix == ".csv":
         raise ValueError("file_name MUST end with .csv")
 
-    file_path = f"data/{safe_filename(file_name)}"
+    file_path = Path("data") / safe_filename(file_name)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
 
     dfs = []
 
@@ -100,18 +104,32 @@ def download_yfinance(reqs: list[YFinanceRequest], file_name: str) -> str:
     return file_path
 
 
-def handle_data_download(
-    reqs: list[YFinanceRequest],
-    file_name: str,
-) -> str:
+def handle_data_download(download_response: DataDownloadResponse) -> DataDownloadResult:
     """
     Handle a data download request, either from Yahoo Finance or via proxy.
 
-    param reqs: List of YFinanceRequest objects with parameters for the request
-    param file_name: Name of the CSV file to save data (must end with .csv)
-    return: Path to the stored data file
+    :param download_response: DataDownloadResponse object containing the download
+    request details.
+    :return: DataDownloadResult object containing the path to the downloaded data file
     """
+    reqs = download_response.download_request
+    file_name = download_response.file_name
+
     if all(isinstance(req, YFinanceRequest) for req in reqs):
-        return download_yfinance(reqs, file_name)
+        try:
+            data_file_path = download_yfinance(reqs, file_name)
+            return DataDownloadResult(
+                data_file_path=data_file_path,
+            )
+        except Exception as e:
+            return DataDownloadResult(
+                data_file_path=None,
+                error_message=str(e),
+            )
     else:
-        raise ValueError("Invalid request type")
+        return DataDownloadResult(
+            data_file_path=None,
+            error_message=(
+                "Invalid request format. Expected a list of YFinanceRequest objects.",
+            ),
+        )
