@@ -1,23 +1,12 @@
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import yfinance as yf
-from pydantic import BaseModel, Field
-
-from backend.src.utils.data_models import DataDownloadResponse, DataDownloadResult
-
-
-class YFinanceRequest(BaseModel):
-    share_name: str = Field(
-        ..., description="Name of the share to download data for, e.g. 'E.ON'"
-    )
-    period: Optional[str] = Field(
-        "1mo", description="Data period, e.g. 1d, 5d, 1mo, 1y"
-    )
-    interval: Optional[str] = Field("1d", description="Data interval, e.g. 1m, 1h, 1d")
-    start: Optional[str] = Field(None, description="Start date YYYY-MM-DD")
-    end: Optional[str] = Field(None, description="End date YYYY-MM-DD")
+from src.utils.data_models import (
+    DataDownloadResponse,
+    DataDownloadResult,
+    YFinanceRequest,
+)
 
 
 def safe_filename(name: Path) -> Path:

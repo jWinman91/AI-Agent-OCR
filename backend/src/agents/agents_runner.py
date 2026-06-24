@@ -351,7 +351,7 @@ class AgentRunner:
         agent_funcs = {
             "orchestrator": self.run_orchestrator,
             "data_extractor": self.run_data_extractor,
-            "data_downloader": self.run_data_downloader,
+            "data_downloader": self.run_downloader,
             "analyser": self.run_analyser,
         }
         agent_params = {

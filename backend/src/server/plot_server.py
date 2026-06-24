@@ -1,8 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
-
-from backend.src.utils.data_models import AnalyserResponse, AnalyserResult
+from src.utils.data_models import AnalyserResponse, AnalyserResult
 
 
 def execute_python_code(
