@@ -19,6 +19,8 @@ build/
 data/
 plots/
 images/
+test_data/
+texts/
 develop-eggs/
 dist/
 downloads/
