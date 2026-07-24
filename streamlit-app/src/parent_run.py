@@ -41,6 +41,9 @@ class ParentRun:
         st.session_state["df"] = st.session_state.get("df", None)
         st.session_state["image"] = st.session_state.get("image", None)
         st.session_state["code_summary"] = st.session_state.get("code_summary", None)
+        st.session_state["previous_error"] = st.session_state.get(
+            "previous_error", None
+        )
 
     def _get_csv(self, file_name: str) -> pd.DataFrame:
         """
@@ -79,8 +82,8 @@ class ParentRun:
         """
         with st.form(f"Upload_widget_{page_name}", clear_on_submit=True):
             uploaded_images = st.file_uploader(
-                "Upload your images here (PNG, JPG, JPEG, TIFF, BMP)...",
-                type=["png", "jpg", "jpeg", "tiff", "bmp"],
+                "Upload your images here (PNG, JPG, JPEG, TIFF, BMP, PDF)...",
+                type=["png", "jpg", "jpeg", "tiff", "bmp", "pdf"],
                 accept_multiple_files=True,
             )
             resize = st.selectbox(
@@ -91,25 +94,44 @@ class ParentRun:
             upload_button = st.form_submit_button("Upload images")
 
             if len(uploaded_images) > 0 and upload_button:
-                with st.spinner("Uploading images..."):
-                    # Upload images to the backend
-                    success = self._request_be.post(
-                        "uploadimages",
-                        {"resize": resize.lower()},
-                        uploaded_images,
-                    )
-                    logger.info(f"Upload successful: {success}.")
-                    st.session_state["uploaded_images"] = [
-                        image.name for image in uploaded_images
-                    ]
+                # check if the file is a pdf and send it to the uploadpdf endpoint
+                if any(file.name.lower().endswith(".pdf") for file in uploaded_images):
+                    # not more than 1 pdf file can be uploaded though
+                    if len(uploaded_images) > 1:
+                        st.error("Please upload only one PDF file at a time.")
+                        return False
 
-            # Display success message
-            if len(st.session_state["uploaded_images"]) > 0:
-                uploaded_images_str = "\n".join(
-                    [f"- {image}" for image in st.session_state["uploaded_images"]]
-                )
-                st.success(
-                    f"Successfully uploaded the following files:\n{uploaded_images_str}."
-                )
-                return True
-            return False
+                    pdf_file = uploaded_images[0]
+                    with st.spinner("Uploading PDF..."):
+                        success = self._request_be.post(
+                            "uploadpdf",
+                            {"resize": resize.lower()},
+                            pdf_file,
+                        )
+                        st.session_state["uploaded_images"] = [pdf_file.name]
+
+                else:
+                    with st.spinner("Uploading images..."):
+                        # Upload images to the backend
+                        success = self._request_be.post(
+                            "uploadimages",
+                            {"resize": resize.lower()},
+                            uploaded_images,
+                        )
+                        st.session_state["uploaded_images"] = [
+                            image.name for image in uploaded_images
+                        ]
+                logger.info(f"Upload successful: {success}.")
+
+                # Display success message
+                if len(st.session_state["uploaded_images"]) > 0:
+                    uploaded_images_str = "\n".join(
+                        [f"- {image}" for image in st.session_state["uploaded_images"]]
+                    )
+                    st.success(
+                        f"Successfully uploaded the following files:\n"
+                        f"{uploaded_images_str}."
+                    )
+                    return True
+                return False
+            return True

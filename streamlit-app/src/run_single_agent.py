@@ -27,10 +27,20 @@ class SingleAgent(ParentRun):
                         "run_single_agent",
                         {
                             "user_prompt": user_prompt,
-                            "agent_name": "extractor",
+                            "agent_name": "data_extractor",
+                            "previous_error": st.session_state.get(
+                                "previous_error", None
+                            ),
                         },
                         payload_type="data",
                     )
+                    if response_json.get("error_message"):
+                        st.error(response_json["error_message"])
+                        st.session_state["previous_error"] = response_json[
+                            "error_message"
+                        ]
+
+                        return
 
                     # Fetch generated data and plot from backend
                     st.session_state["df"] = self._get_csv(
@@ -116,9 +126,18 @@ class SingleAgent(ParentRun):
                         {
                             "user_prompt": user_prompt,
                             "agent_name": "analyser",
+                            "previous_error": st.session_state.get(
+                                "previous_error", None
+                            ),
                         },
                         payload_type="data",
                     )
+                    if response_json.get("error_message"):
+                        st.error(response_json["error_message"])
+                        st.session_state["previous_error"] = response_json[
+                            "error_message"
+                        ]
+                        return
                     st.session_state["code_summary"] = response_json["code_summary"]
                     logger.info(f"Plot generation response: {response_json}.")
 

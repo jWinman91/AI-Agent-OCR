@@ -156,13 +156,12 @@ class BeRequest:
         :param data_files: Data files to be uploaded with the request.
         :return: Dictionary containing the response from the backend.
         """
-        print(data_files[0])
         logger.info(
             f"Sending POST request to {self._url}/{path} "
             f"with params {params} and "
             f"data files {''.join(file.name for file in data_files)}."
         )
-        if not data_files or len(data_files) < 2:
+        if not data_files:
             raise ValueError("No data files provided.")
 
         files = [("files", data_file) for data_file in data_files]

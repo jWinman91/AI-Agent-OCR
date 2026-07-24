@@ -26,10 +26,22 @@ class RunAiAgentOcr(ParentRun):
                     # Send request to backend to generate plot
                     response_json = self._request_be.post(
                         "run_agents",
-                        {"user_prompt": user_prompt},
+                        {
+                            "user_prompt": user_prompt,
+                            "previous_error": st.session_state.get(
+                                "previous_error", None
+                            ),
+                        },
                         payload_type="data",
                     )
+                    if response_json.get("error_message"):
+                        st.error(response_json["error_message"])
+                        st.session_state["previous_error"] = response_json[
+                            "error_message"
+                        ]
+                        return
                     st.session_state["code_summary"] = response_json["code_summary"]
+                    st.session_state["previous_error"] = None
                     logger.info(f"Plot generation response: {response_json}.")
 
                     # Fetch generated data and plot from backend

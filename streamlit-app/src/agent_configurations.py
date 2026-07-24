@@ -63,7 +63,8 @@ class AgentConfigurations:
             params={"config_name": agent_name},
             data_type=None,
         )
-        print("Agent name: ", agent_name, " MCP Server: ", config["mcp_servers"])
+        print("Agent name: ", agent_name)
+        print("Config: ", config)
 
         system_prompt = st.text_area(
             "System Prompt",
@@ -82,15 +83,23 @@ class AgentConfigurations:
         )
 
         if model_provider == "ollama":
-            ollama_models = get_ollama_models()
+            ollama_models = get_ollama_models() + ["model not found"]
+            index = ollama_models.index(
+                config.get("model", "qwen-7b")
+                if config.get("model", "qwen-7b") in ollama_models
+                else ollama_models[-1]
+            )
+            print(ollama_models, index)
+            if index == len(ollama_models) - 1:
+                st.error(
+                    "Model not found in Ollama models. "
+                    "Please check your Ollama installation."
+                )
+                return
             model = st.selectbox(
                 "Model",
                 options=ollama_models,
-                index=ollama_models.index(
-                    config.get("model", "qwen-7b")
-                    if config.get("model", "qwen-7b") in ollama_models
-                    else ollama_models[0]
-                ),
+                index=index,
                 key=f"ollama_model_selectbox_{agent_name}",
             )
         else:
@@ -112,24 +121,6 @@ class AgentConfigurations:
                     payload_type="params",
                 )
 
-        if "mcp_servers" in config and config["mcp_servers"] is not None:
-            available_mcp_servers = self._request_be.get(path="get_mcp_servers")[
-                "mcp_servers"
-            ]
-            preset_names = [
-                p["args"][0].split("/")[-1] for p in config.get("mcp_servers", [])
-            ]
-
-            selected_mcp = st.multiselect(
-                "MCP Servers", options=available_mcp_servers, default=preset_names
-            )
-            mcp_servers = [
-                {"command": "python", "args": [f"src/server/{name}"]}
-                for name in selected_mcp
-            ]
-        else:
-            mcp_servers = None
-
         if st.button(
             "Save Configuration",
             type="secondary",
@@ -139,7 +130,6 @@ class AgentConfigurations:
                 "system_prompt_user": system_prompt,
                 "model": model,
                 "model_provider": model_provider,
-                "mcp_servers": mcp_servers,
             }
 
             success = self._request_be.post(
