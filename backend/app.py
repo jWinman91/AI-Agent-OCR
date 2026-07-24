@@ -25,6 +25,7 @@ class AiAgentOcrApp:
         data_dir: Path = Path("data"),
         output_dir: Path = Path("plots"),
         image_dir: Path = Path("images"),
+        text_dir: Path = Path("texts"),
         agent_config_path: Path = Path("configs/agents.yaml"),
     ) -> None:
         """
@@ -34,6 +35,7 @@ class AiAgentOcrApp:
         :param port: Port to bind the server
         :param data_dir: Directory to store data files
         :param output_dir: Directory to store output plots
+        :param text_dir: Directory to store text files
         :param agent_config_path: Path to the agent configuration file
         """
         self.IP = ip
@@ -41,6 +43,7 @@ class AiAgentOcrApp:
 
         # MUTUABLE STATES
         self._image_urls: list[Path] = []
+        self._text_file_urls: list[Path] = []
         self._data_file_path: Path | None = None
 
         self.CONFIG_BUILDER = ConfigBuilder(agent_config_path)
@@ -48,6 +51,7 @@ class AiAgentOcrApp:
             data_dir=data_dir,
             plot_dir=output_dir,
             image_dir=image_dir,
+            text_dir=text_dir,
         )
         self.FILE_MANAGER.clean_up()
         self.PREPROCESSOR = Preprocessor()
@@ -132,7 +136,7 @@ class AiAgentOcrApp:
             Recreates the agents with the current configuration.
             :return: True if successful
             """
-            self._ai_agent_runner = AgentRunner(
+            self.ai_agent_runner = AgentRunner(
                 config=self.CONFIG_BUILDER.build_config(),
                 data_dir=self.FILE_MANAGER.get_data_dir(),
                 plots_dir=self.FILE_MANAGER.get_plot_dir(),
@@ -155,17 +159,22 @@ class AiAgentOcrApp:
             if agent_name == "data_extractor":
                 # Get image URLs from the file manager
                 if len(self._image_urls) == 0:
-                    raise ValueError("Data extractor agent requires images to process!")
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Data extractor agent requires images to process!",
+                    )
                 # Run the data extractor agent
                 res = await self.ai_agent_runner.run_ai_ocr_agents(
                     user_prompt=user_prompt,
                     image_urls=self._image_urls,
+                    text_file_urls=self._text_file_urls,
                     data_file_path=None,
                     list_of_agents_to_run=["orchestrator", "data_extractor"],
                     previous_error=previous_error,
                 )
-                # reset image URLs after use
+                # reset image and text file URLs after use
                 self._image_urls = []
+                self._text_file_urls = []
                 return res
 
             elif agent_name == "analyser":
@@ -173,6 +182,7 @@ class AiAgentOcrApp:
                 res = await self.ai_agent_runner.run_ai_ocr_agents(
                     user_prompt=user_prompt,
                     image_urls=[],
+                    text_file_urls=[],
                     data_file_path=self._data_file_path,
                     list_of_agents_to_run=["orchestrator", "analyser"],
                     previous_error=previous_error,
@@ -205,6 +215,7 @@ class AiAgentOcrApp:
             agent_result = await self.ai_agent_runner.run_ai_ocr_agents(
                 user_prompt=user_prompt,
                 image_urls=self._image_urls,
+                text_file_urls=self._text_file_urls,
                 data_file_path=None,
                 list_of_agents_to_run=[
                     "orchestrator",
@@ -214,8 +225,9 @@ class AiAgentOcrApp:
                 previous_error=previous_error,
             )
 
-            # Reset image URLs after use
+            # Reset image and text file URLs after use
             self._image_urls = []
+            self._text_file_urls = []
             return agent_result
 
         @self.app.post("/uploadimages/")
@@ -238,26 +250,65 @@ class AiAgentOcrApp:
                     detail="Only image files with extensions png, jpg, jpeg are allowed",
                 )
 
-            if resize == "medium":
-                resize_files = []
-                for file in files:
-                    file = self.PREPROCESSOR.resize_image(
+            resize_files = []
+            for file in files:
+                if resize == "medium":
+                    resized_file = self.PREPROCESSOR.resize_image(
                         file,
                         max_size=800,
                     )
-                    resize_files.append(file)
-            elif resize == "small":
-                resize_files = []
-                for file in files:
-                    file = self.PREPROCESSOR.resize_image(
+                elif resize == "small":
+                    resized_file = self.PREPROCESSOR.resize_image(
                         file,
                         max_size=400,
                     )
-                    resize_files.append(file)
-            else:
-                resize_files = files
+                else:
+                    resized_file = file
+
+                clahe_file = self.PREPROCESSOR.apply_clahe(resized_file)
+                resize_files.append(clahe_file)
+
             self._image_urls = self.FILE_MANAGER.upload_images(resize_files)
             logger.info(f"Uploaded {len(self._image_urls)} images.")
+            return True
+
+        @self.app.post("/uploadpdf/")
+        async def upload_pdf(
+            file: UploadFile = File(...),
+            resize: Literal["original", "medium", "small"] = Form(default="medium"),
+        ) -> bool:
+            """
+            Endpoint to upload a PDF file.
+
+            Reads in the PDF file, converts each (resized) page to an image,
+            and uploads the images to the backend.
+
+            :param file: PDF file to upload
+            :return: True if successful
+            """
+            if not file.filename.endswith(".pdf"):
+                raise HTTPException(
+                    status_code=422, detail="Only PDF files are allowed"
+                )
+
+            # generate the images from the pdf file based on the resize option
+            try:
+                if resize == "medium":
+                    image_files = self.PREPROCESSOR.convert_pdf_to_images(file, dpi=300)
+                elif resize == "small":
+                    image_files = self.PREPROCESSOR.convert_pdf_to_images(file, dpi=150)
+                else:
+                    image_files = self.PREPROCESSOR.convert_pdf_to_images(file, dpi=600)
+
+                # generate the text from the pdf file
+                text_dict = self.PREPROCESSOR.convert_pdf_to_text(file)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
+
+            self._image_urls = self.FILE_MANAGER.upload_images(image_files)
+            self._text_file_urls = self.FILE_MANAGER.upload_txt_files(text_dict)
+            logger.info(f"Uploaded {len(self._image_urls)} images.")
+            logger.info(f"Uploaded {len(self._text_file_urls)} text files.")
             return True
 
         @self.app.post("/uploaddatafile")

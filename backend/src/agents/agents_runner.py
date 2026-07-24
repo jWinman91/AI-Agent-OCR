@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal
 
 import pandas as pd
+from fastapi import UploadFile
 from loguru import logger
 from PIL import Image
 from src.agents.agents_factory import AgentsFactory
@@ -84,7 +85,7 @@ class AgentRunner:
         :return: Timestamp extracted from the image metadata or current time
                  if not available
         """
-        if image_url.suffix.lower() != ".pdf":
+        if image_url.suffix.lower() != ".pdf" and image_url.suffix.lower() != ".md":
             exif = Image.open(image_url)._getexif()
             if exif is not None and 36867 in list(exif.keys()):
                 return datetime.datetime.strptime(exif[36867], "%Y:%m:%d %H:%M:%S")
@@ -120,7 +121,12 @@ class AgentRunner:
         ]
 
         if cols_to_explode:
-            df = df.explode(cols_to_explode, ignore_index=True)
+            try:
+                df = df.explode(cols_to_explode, ignore_index=True)
+            except Exception as e:
+                logger.error(f"Error while exploding columns in DataFrame: {str(e)}")
+                for col in cols_to_explode:
+                    df = df.explode(col, ignore_index=True)
 
         df.to_csv(file_path, index=False)
         logger.info(f"Extracted DataFrame:\n{df} \n saved to {file_path}.")
@@ -161,39 +167,48 @@ class AgentRunner:
             ),
         )
 
-        return self._error_handling(orchestrator_res)
+        return self._error_handling(
+            agent_name="orchestrator",
+            agent_result=orchestrator_res,
+        )
 
     async def run_data_extractor(
         self,
         extractor_prompt: DataExtractorPrompt,
         image_urls: List[Path],
+        text_file_urls: List[Path],
+        system_prompt_args: dict[str, str],
     ) -> DataExtractorResult:
         """
         Runs the data extractor agent on a list of image URLs.
 
         :param extractor_prompt: The prompt to provide to the data extractor.
         :param image_urls: List of image URLs to process.
-        :param previous_errors_data_extractor: Previous errors from the data extractor
-                                               agent.
-        :return: A tuple containing the extracted data as a DataFrame and the plot
-                 prompt.
+        :param text_file_urls: List of text file URLs to process.
+        :return: The result of the data extraction,
+        including the path to the saved DataFrame and any error message.
         """
         # Create data_extractor agent based on orchestrator's instructions
         data_extractor = self.agents.create_agent(
-            "data_extractor",
-            self.CONFIG["data_extractor"],
-            DataExtractorResponse,
-            {"json_details": extractor_prompt.json_details},
+            agent_name="data_extractor",
+            config=self.CONFIG["data_extractor"],
+            output_type=DataExtractorResponse,
+            system_prompt_args={
+                **system_prompt_args,
+                "json_details": extractor_prompt.json_details,
+            },
         )
 
         # Run data_extractor for each image
         df = pd.DataFrame()
         timestamps = []
-        for image_url in image_urls:
+        for i, image_url in enumerate(image_urls):
+            text_file_url = text_file_urls[i] if i < len(text_file_urls) else None
             data_extractor_res = await self.agents.run_agent(
                 agent=data_extractor,
                 user_prompt=extractor_prompt.user_prompt,
                 image_url=image_url,
+                text_file_url=text_file_url,
                 output_type_example=DataExtractorResponse(
                     data={"field_name": "value"},
                     error_message="null or error message",
@@ -272,7 +287,10 @@ class AgentRunner:
             tool_execution_func=handle_data_download,
         )
 
-        return self._error_handling(data_downloader_res)
+        return self._error_handling(
+            agent_name="data_downloader",
+            agent_result=data_downloader_res,
+        )
 
     async def run_analyser(
         self,
@@ -316,12 +334,16 @@ class AgentRunner:
             ),
         )
 
-        return self._error_handling(analyser_res)
+        return self._error_handling(
+            agent_name="analyser",
+            agent_result=analyser_res,
+        )
 
     async def run_ai_ocr_agents(
         self,
         user_prompt: str,
         image_urls: List[Path],
+        text_file_urls: List[Path],
         data_file_path: Path | None,
         list_of_agents_to_run: List[
             Literal[
@@ -354,40 +376,63 @@ class AgentRunner:
             "data_downloader": self.run_downloader,
             "analyser": self.run_analyser,
         }
-        agent_params = {
-            "orchestrator": {
-                "user_prompt": user_prompt,
-                "system_prompt_args": {"previous_error": previous_error},
-            },
-            "data_extractor": {
-                "extractor_prompt": agent_res[
-                    "orchestrator"
-                ].data_extractor_prompt.user_prompt
-                if agent_res["orchestrator"]
-                else user_prompt,
-                "image_urls": image_urls,
-            },
-            "data_downloader": {
-                "data_download_prompt": agent_res["orchestrator"].data_download_prompt
-                if agent_res["orchestrator"]
-                and agent_res["orchestrator"].data_download_prompt
-                else None,
-                "system_prompt_args": {},
-            },
-            "analyser": {
-                "analyser_prompt": agent_res["orchestrator"].analyser_prompt
-                if agent_res["orchestrator"]
-                else user_prompt,
-                "system_prompt_args": {
-                    "data_file_path": agent_res["data_extractor"].data_file_path
-                    if agent_res["data_extractor"]
-                    else data_file_path,
-                    "downloaded_data_file_path": agent_res["data_downloader"].file_name
-                    if agent_res["data_downloader"]
-                    else None,
-                },
-            },
+        previous_error_dict = {
+            agent_name: previous_error
+            if previous_error and agent_name in previous_error
+            else None
+            for agent_name in agent_res.keys()
         }
+
+        def agent_params(
+            agent_res_param: dict[str, Any],
+        ) -> dict[str, dict[str, Any]]:
+            return {
+                "orchestrator": {
+                    "user_prompt": user_prompt,
+                },
+                "data_extractor": {
+                    "extractor_prompt": agent_res_param[
+                        "orchestrator"
+                    ].data_extractor_prompt
+                    if agent_res_param["orchestrator"]
+                    else user_prompt,
+                    "image_urls": image_urls,
+                    "text_file_urls": text_file_urls,
+                    "system_prompt_args": {
+                        "previous_error": previous_error_dict.get("data_extractor")
+                    },
+                },
+                "data_downloader": {
+                    "data_download_prompt": agent_res_param[
+                        "orchestrator"
+                    ].data_download_prompt
+                    if agent_res_param["orchestrator"]
+                    and agent_res_param["orchestrator"].data_download_prompt
+                    else None,
+                    "system_prompt_args": {
+                        "previous_error": previous_error_dict.get("data_downloader")
+                    },
+                },
+                "analyser": {
+                    "analyser_prompt": agent_res_param["orchestrator"].analyser_prompt
+                    if agent_res_param["orchestrator"]
+                    else user_prompt,
+                    "system_prompt_args": {
+                        "output_dir": self.PLOTS_DIR,
+                        "data_file_path": agent_res_param[
+                            "data_extractor"
+                        ].data_file_path
+                        if agent_res_param["data_extractor"]
+                        else data_file_path,
+                        "downloaded_data_file_path": agent_res_param[
+                            "data_downloader"
+                        ].data_file_path
+                        if agent_res_param["data_downloader"]
+                        else None,
+                        "previous_error": previous_error_dict.get("analyser"),
+                    },
+                },
+            }
 
         # check that each agent type occurs maximum once in the list of agents to run
         if len(list_of_agents_to_run) != len(set(list_of_agents_to_run)):
@@ -408,7 +453,7 @@ class AgentRunner:
 
             logger.info(f"Running {agent_name} agent...")
             agent_res[agent_name] = await agent_funcs[agent_name](
-                **agent_params[agent_name]
+                **agent_params(agent_res)[agent_name]
             )
 
             if agent_res[agent_name].error_message:
@@ -424,8 +469,7 @@ class AgentRunner:
                 # if orchestrator provides a data download prompt
                 logger.info("Running data_downloader agent...")
                 agent_res["data_downloader"] = await self.run_downloader(
-                    data_download_prompt=agent_res["orchestrator"].data_download_prompt,
-                    system_prompt_args={},
+                    **agent_params(agent_res)["data_downloader"]
                 )
 
                 if agent_res["data_downloader"].error_message:

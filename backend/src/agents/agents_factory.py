@@ -1,3 +1,4 @@
+import copy
 import logging
 import time
 from pathlib import Path
@@ -5,7 +6,7 @@ from typing import Any, Callable, Dict
 
 from loguru import logger
 from pydantic_ai import Agent, BinaryContent
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import ModelSettings, OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from src.agents.output_validator import OutputValidator
 from src.utils.data_models import AgentResponse, AgentResult, ConfigModelBuild
@@ -90,7 +91,7 @@ class AgentsFactory:
         else:
             cfg["model"] = f"{model_provider}:{cfg['model']}"
 
-        agent = Agent(**cfg)
+        agent = Agent(**cfg, model_settings={"temperature": 0.0, "top_p": 1.0})
         agent.name = agent_name
         return agent
 
@@ -100,6 +101,7 @@ class AgentsFactory:
         output_type_example: AgentResponse,
         user_prompt: str,
         image_url: str | Path | None = None,
+        text_file_url: str | Path | None = None,
         tool_execution_func: Callable[[AgentResponse], Any] | None = None,
     ) -> AgentResult:
         """
@@ -109,11 +111,24 @@ class AgentsFactory:
         :param output_type_example: Example of the expected output type for validation.
         :param user_prompt: The user prompt to provide to the agent.
         :param image_url: Optional path to an image file to provide to the agent.
-        param tool_execution_func: Optional function to execute tools
+        :param text_file_url: Optional path to a text file to provide to the agent.
+        :param tool_execution_func: Optional function to execute tools
         :return: The agent's response, validated explicitly if it's a string output.
         """
         t0 = time.time()
-        if image_url is not None:
+        # check if image_url and text_file_url are not empty
+        if text_file_url:
+            with Path(text_file_url).open("r") as f:
+                file_content = f.read()
+
+            user_prompt = (
+                f"{user_prompt}\n\n"
+                f"**DOCUMENT INFOS**:\n"
+                f"{file_content}\n"
+                f"**DOCUMENT INFOS**"
+            )
+
+        if image_url:
             image_path = Path(image_url)
             with image_path.open("rb") as f:
                 file_content = f.read()
@@ -138,9 +153,17 @@ class AgentsFactory:
         )
 
         if type(response.output) is str:
-            structured_output = await self.OUTPUT_VALIDATOR.validate_output(
-                response.output, agent.name if agent.name else "", output_type_example
-            )
+            try:
+                structured_output = await self.OUTPUT_VALIDATOR.validate_output(
+                    response.output,
+                    agent.name if agent.name else "",
+                    output_type_example,
+                )
+            except Exception as e:
+                logger.error(f"Error validating output for {agent.name}: {e}")
+                structured_output = copy.deepcopy(output_type_example)
+                structured_output.error_message = f"Error validating output: {str(e)}"
+                return structured_output
         else:
             structured_output = response.output
 

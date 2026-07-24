@@ -1,3 +1,4 @@
+import traceback
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +38,7 @@ def execute_python_code(
         exec(analyser_response.python_code, context)
         return AnalyserResult(
             df_file_path=context["df_file_path"],
+            data_file_path=data_file_path or downloaded_data_file_path,
             plot_path=context["plot_path"],
             code_summary=analyser_response.code_summary,
             error_message=None,
@@ -44,9 +46,10 @@ def execute_python_code(
     except Exception as e:
         return AnalyserResult(
             df_file_path=None,
+            data_file_path=None,
             plot_path=None,
             code_summary=analyser_response.code_summary,
-            error_message=str(e),
+            error_message=traceback.format_exc(),
         )
 
 
@@ -65,10 +68,14 @@ def get_dataset_metadata(data_file_path: Path | None) -> str:
     # Basic info
     info_lines = [
         f"DATASET INFOS for file {data_file_path}:",
-        f"Shape: {df.shape[0]} rows x {df.shape[1]} columns",
-        "Columns and types:",
+        "========================================",
+        f"Shape: {df.shape[0]} rows x {df.shape[1]} columns\n\n",
+        f"Exact column names: {list(df.columns)} \n\n",
+        "COLUMN DETAILS:\n\n",
     ]
 
+    # Column names and types
+    info_lines.append("Column names and types:")
     for col, dtype in df.dtypes.items():
         info_lines.append(f"  - {col}: {dtype}")
 
@@ -86,6 +93,7 @@ def get_dataset_metadata(data_file_path: Path | None) -> str:
         info_lines.append(stats.to_string())
 
     # Include head and optionally tail
+    info_lines.append("SAMPLE DATA:\n\n")
     info_lines.append("\nFirst rows:")
     info_lines.append(df.head().to_string(index=False))
     info_lines.append("\nLast rows:")

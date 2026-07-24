@@ -24,7 +24,6 @@ class ConfigModelBase(BaseModel):
 
     model: str
     model_provider: Optional[str] = "openai"
-    mcp_servers: list[dict[str, Any]] | None = None
     output_type: Optional[bool] = False
     base_url: Optional[str] = "http://localhost:11434/v1"
 
@@ -127,6 +126,7 @@ class AnalyserResult(BaseModel):
     """
 
     df_file_path: Path | None
+    data_file_path: Path | None
     plot_path: Path | None
     code_summary: str
     error_message: str | None = None

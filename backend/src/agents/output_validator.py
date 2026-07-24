@@ -63,16 +63,16 @@ class OutputValidator:
                 f"Initial JSON parsing failed: {e},"
                 f"attempting to extract JSON code block."
             )
-            json_match = re.search(r"```json\s*[\s\S]*?```", text, re.DOTALL)
-
-            if json_match and "None" not in text:
-                json_str = (
-                    json_match.group(0)
-                    .replace("```json", "")
-                    .replace("```", "")
-                    .strip()
+            # Fallback for models that prepend/append explanations around JSON.
+            # Try to decode the first valid inline JSON object in the text.
+            inline_json = self.extract_first_json_object(text)
+            if inline_json is not None:
+                return inline_json
+            else:
+                logger.error(
+                    "Could not extract valid JSON, "
+                    "attempting to fix output with FixJson agent now."
                 )
-                return json.loads(json_str)
 
             user_prompt = self.PROMPT.format(
                 expected_json=expected_json.model_dump(),
@@ -103,21 +103,44 @@ class OutputValidator:
                 return json.loads(fixed_json.fixed_json)
             else:
                 logger.error(
-                    f"Could not parse JSON."
-                    f"fix_json failed with error: {fixed_json.error_message}"
+                    f"Error in parsing JSON. "
+                    f"FixJson agent failed with error: {fixed_json.error_message}",
                 )
                 raise (
                     ValueError(
-                        f"Could not parse JSON."
-                        f"fix_json failed with error: {fixed_json.error_message}"
+                        f"Error in parsing JSON. "
+                        f"FixJson agent failed with error: {fixed_json.error_message}"
                     )
                 )
+
+    @staticmethod
+    def extract_first_json_object(text: str) -> dict[str, Any] | None:
+        """
+        Extract the first valid JSON object from free-form text.
+
+        This handles outputs like: "Explanation... { ...valid json... }".
+        """
+        decoder = json.JSONDecoder()
+
+        # Find the first JSON object start and treat it as authoritative.
+        # If this object is broken, return None so the fixer can repair it
+        # instead of accidentally decoding nested objects.
+        start_index = text.find("{")
+        if start_index == -1:
+            return None
+
+        try:
+            parsed, end_index = decoder.raw_decode(text[start_index:])
+        except json.JSONDecodeError:
+            return None
+
+        return parsed if isinstance(parsed, dict) else None
 
     async def validate_output(
         self,
         agent_response: str,
         agent_name: str,
-        expected_json: AgentResponse,
+        expected_json: AgentResponse | str,
     ) -> AgentResponse:
         """
         Validates the output of an agent against the expected Pydantic model.
@@ -133,6 +156,8 @@ class OutputValidator:
                 python_code=self.extract_tag("CODE", agent_response),
                 code_summary=self.extract_tag("SUMMARY", agent_response),
             )
+        if type(expected_json) is str:
+            return agent_response
 
         parsed_output = await self.parse_json(
             text=agent_response,
@@ -165,7 +190,7 @@ class OutputValidator:
             else:
                 raise (
                     ValueError(
-                        f"Could not parse output."
+                        f"Error in validating model."
                         f"fix_json failed with error: {fixed_json.error_message}"
                     )
                 )
