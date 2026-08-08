@@ -92,17 +92,12 @@ class DataExtractor:
         The experiment_name parameter and the run_name parameter are used to create a
         unique name for the saved file. The file is saved in CSV format.
 
-        Additionally, the timestamp and the latest git hash of the codebase are appended
-        to the filename to ensure uniqueness and traceability.
-
         E.g., if
             experiment_name is "body_weight",
             run_name is "1",
-            the timestamp is "2023-09-01_12-00-00",
-            and the latest git hash is "abc123",
         then
             the file will be saved as:
-              EXTRACTED_DATA_DIR/body_weight_1_2023-09-01_12-00-00_abc123.csv
+              EXTRACTED_DATA_DIR/body_weight_1.csv
 
         Args:
             data_file_path (Path): Path to the extracted data file from the backend.
