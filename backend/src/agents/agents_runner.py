@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal
 
 import pandas as pd
-from fastapi import UploadFile
 from loguru import logger
 from PIL import Image
 from src.agents.agents_factory import AgentsFactory
@@ -95,42 +94,15 @@ class AgentRunner:
         )
 
     @staticmethod
-    def _post_process_and_save_df(
-        df: pd.DataFrame,
-        file_path: Path,
-        timestamps: List[datetime.datetime],
-        image_urls: List[Path],
-    ) -> Path:
+    def _strip_linebreaks(df: pd.DataFrame) -> pd.DataFrame:
         """
-        Post-process the extracted DataFrame by exploding columns with list or tuple
-        values.
+        Replaces linebreaks in string values with spaces so that extracted fields
+        cannot break the row structure of the exported CSV.
 
-        :param df: The DataFrame to post-process
-        :param file_path: The path to save the post-processed DataFrame
-        :param timestamps: List of timestamps corresponding to each row in the DataFrame
-        :param image_urls: List of image URLs corresponding to each row in the DataFrame
-        :return: The path to the saved DataFrame
+        :param df: DataFrame containing extracted row objects
+        :return: The DataFrame with linebreaks in string values replaced by spaces.
         """
-        df["timestamp"] = timestamps
-        df["image_url"] = image_urls
-
-        cols_to_explode = [
-            col
-            for col in df.columns
-            if df[col].apply(lambda x: isinstance(x, (list, tuple))).any()
-        ]
-
-        if cols_to_explode:
-            try:
-                df = df.explode(cols_to_explode, ignore_index=True)
-            except Exception as e:
-                logger.error(f"Error while exploding columns in DataFrame: {str(e)}")
-                for col in cols_to_explode:
-                    df = df.explode(col, ignore_index=True)
-
-        df.to_csv(file_path, index=False)
-        logger.info(f"Extracted DataFrame:\n{df} \n saved to {file_path}.")
-        return file_path
+        return df.map(lambda x: " ".join(x.splitlines()) if isinstance(x, str) else x)
 
     async def run_orchestrator(
         self,
@@ -201,7 +173,6 @@ class AgentRunner:
 
         # Run data_extractor for each image
         df = pd.DataFrame()
-        timestamps = []
         for i, image_url in enumerate(image_urls):
             text_file_url = text_file_urls[i] if i < len(text_file_urls) else None
             data_extractor_res = await self.agents.run_agent(
@@ -210,11 +181,21 @@ class AgentRunner:
                 image_url=image_url,
                 text_file_url=text_file_url,
                 output_type_example=DataExtractorResponse(
-                    data={"field_name": "value"},
+                    data=[{"field_name": "value"}],
                     error_message="null or error message",
                 ),
             )
-            timestamps.append(self._get_image_timestamp(image_url))
+
+            # drop duplicates and strip linebreaks from extracted data
+            df_row = pd.DataFrame.from_records(data_extractor_res.data)
+            df_row = self._strip_linebreaks(df_row)
+            df_row = df_row.drop_duplicates(keep="first", ignore_index=True)
+
+            # print out number of rows and duplicates dropped for each image
+            logger.info(
+                f"Extracted {len(df_row)} rows from image {image_url} "
+                f"(dropped {len(data_extractor_res.data) - len(df_row)} duplicates)."
+            )
 
             # return error if data extractor fails, no point in continuing
             if (
@@ -233,18 +214,16 @@ class AgentRunner:
                     ),
                 )
 
-            df = pd.concat(
-                [df, pd.DataFrame([data_extractor_res.data])],
-                ignore_index=True,
-            )
+            # add timestamp and image_url to the extracted data row
+            df_row["timestamp"] = self._get_image_timestamp(image_url)
+            df_row["image_url"] = str(image_url)
+            df = pd.concat([df, df_row], ignore_index=True)
 
-        # Post-process and save extracted DataFrame
-        df_path = self._post_process_and_save_df(
-            df=df,
-            file_path=self.DATA_DIR / "extracted_data_from_ai_ocr_agents.csv",
-            timestamps=timestamps,
-            image_urls=image_urls,
-        )
+        # Save extracted DataFrame
+        df_path = self.DATA_DIR / "extracted_data_from_ai_ocr_agents.csv"
+
+        df.to_csv(df_path, index=False)
+        logger.info(f"Extracted DataFrame:\n{df} \n saved to {df_path}.")
 
         return DataExtractorResult(
             data_file_path=df_path,
@@ -353,7 +332,7 @@ class AgentRunner:
             ]
         ],
         previous_error: str | None = None,
-    ) -> AgentResult:
+    ) -> AgentResult | None:
         """
         Runs the full AI OCR pipeline: data extractor and analyser agents.
 

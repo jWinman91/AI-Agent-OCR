@@ -136,7 +136,7 @@ class Preprocessor:
         num_pages = doc.page_count
 
         text_files = {
-            f"{pdf_file.filename}_page_{i + 1}.md": pymupdf4llm.to_markdown(
+            f"{pdf_file.filename}_page_{i + 1}.txt": pymupdf4llm.to_text(
                 doc,
                 pages=[i],
                 force_ocr=True,

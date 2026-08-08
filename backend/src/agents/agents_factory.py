@@ -123,9 +123,9 @@ class AgentsFactory:
 
             user_prompt = (
                 f"{user_prompt}\n\n"
-                f"**DOCUMENT INFOS**:\n"
+                f"<EXTRACTED PDF TEXT>:\n"
                 f"{file_content}\n"
-                f"**DOCUMENT INFOS**"
+                f"</EXTRACTED PDF TEXT>"
             )
 
         if image_url:

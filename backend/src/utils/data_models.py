@@ -68,7 +68,7 @@ class DataExtractorResponse(BaseModel):
     Response model for the data extractor agent.
     """
 
-    data: dict[str, Any]
+    data: list[dict[str, Any]]
     error_message: str | None = None
 
 
@@ -151,5 +151,5 @@ class DataExtractorResult(BaseModel):
 
 
 AgentResult = (
-    DataExtractorResponse | OrchestratorResponse | AnalyserResult | DataDownloadResult
+    DataExtractorResult | OrchestratorResponse | AnalyserResult | DataDownloadResult
 )
