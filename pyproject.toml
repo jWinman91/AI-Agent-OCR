@@ -26,14 +26,14 @@ dependencies = [
   "yfinance",
   "seaborn",
   "matplotlib",
-  "neuralprophet>=1.0.0rc10",
   "pdf2image",
   "pymupdf",
   "pymupdf4llm",
   "numpy",
   "statsmodels",
   "scikit-learn",
-  "opencv-python"
+  "opencv-python",
+  "sktime"
 ]
 
 [project.optional-dependencies]
