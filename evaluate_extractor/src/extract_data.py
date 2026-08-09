@@ -16,6 +16,7 @@ class DataExtractor:
         protocol: str = "http",
         extracted_data_dir: Path = Path("extracted_data"),
         test_data_dir: Path = Path("test_data"),
+        config_data_dir: Path = Path("config_data"),
     ) -> None:
         self._be_request = BeRequest(ip=ip, port=port, protocol=protocol)
 
@@ -25,6 +26,7 @@ class DataExtractor:
         # some directories as constants
         self._EXTRACTED_DATA_DIR = extracted_data_dir
         self._TEST_DATA_DIR = test_data_dir
+        self._CONFIG_DATA_DIR = config_data_dir
 
     def load_files(self, experiment_name: Path) -> list[UploadFile]:
         """Loads all files from the directory inside TEST_DATA_DIR and returns a list of
@@ -105,5 +107,26 @@ class DataExtractor:
             loaded. Used to create a unique name for the saved file.
             run_name (str): Name of the run. Used to create a unique name for the saved
             file.
+        """
+        pass
+
+    def save_config(
+        self,
+        experiment_name: str,
+        run_name: str,
+    ) -> None:
+        """Gets the configuration for the data_extractor agents and saves it as a yaml.
+
+        The configuration is retrieved from the backend using the /get_config route with
+        the `config_name` set to `data_extractor`. The configuration is then saved to the
+        CONFIG_DATA_DIR directory with a unique name based on the experiment_name and
+        run_name parameters.
+
+        E.g., if
+            experiment_name is "body_weight",
+            run_name is "1",
+        then
+            the file will be saved as:
+              CONFIG_DATA_DIR/body_weight_1_config.yaml
         """
         pass
