@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PIL import Image  # noqa: E402
@@ -161,7 +163,12 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         agent.run = AsyncMock(return_value=SimpleNamespace(output="<CODE>pass</CODE>"))
         parsed = await factory.run_agent(agent, response, "request")
         self.assertIs(parsed, response)
-        callback = Mock(return_value=execute_python_code(response, None, None))
+        with patch(
+            "src.server.plot_server.pd.read_csv",
+            return_value=pd.DataFrame({"value": [1]}),
+        ):
+            executed = execute_python_code(response, Path("data.csv"), None)
+        callback = Mock(return_value=executed)
         result = await factory.run_agent(
             agent, response, "request", tool_execution_func=callback
         )
@@ -243,9 +250,16 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         factory.run_agent = AsyncMock(side_effect=run_agent)
         runner.agents = factory
         runner.CONFIG = {"analyser": Mock(), "code_repair": Mock()}
-        with patch("src.agents.agents_runner.get_dataset_metadata", return_value=""):
+        with (
+            patch("src.agents.agents_runner.get_dataset_metadata", return_value=""),
+            patch(
+                "src.server.plot_server.pd.read_csv",
+                return_value=pd.DataFrame({"value": [1]}),
+            ),
+        ):
             result = await runner.run_analyser(
-                "request", {"data_file_path": None, "downloaded_data_file_path": None}
+                "request",
+                {"data_file_path": Path("data.csv"), "downloaded_data_file_path": None},
             )
         self.assertIsNone(result.error_message)
         self.assertEqual(factory.run_agent.await_count, 2)
@@ -253,6 +267,54 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repair["agent"], "code_repair")
         self.assertIn("raise ValueError('original')", repair["user_prompt"])
         self.assertIn("ValueError: original", repair["user_prompt"])
+
+
+class ExecutionDataContracts(unittest.TestCase):
+    def test_missing_or_empty_datasets_skip_execution(self) -> None:
+        empty = pd.DataFrame(columns=["value"])
+        for extracted, downloaded in (
+            (None, None),
+            (empty, None),
+            (None, empty),
+            (empty, empty),
+        ):
+            with self.subTest(
+                extracted=extracted is not None, downloaded=downloaded is not None
+            ):
+                values = [
+                    frame for frame in (extracted, downloaded) if frame is not None
+                ]
+                with (
+                    patch("src.server.plot_server.pd.read_csv", side_effect=values),
+                    patch("builtins.exec") as execute,
+                ):
+                    result = execute_python_code(
+                        AnalyserResponse(python_code="pass", code_summary="summary"),
+                        Path("extracted.csv") if extracted is not None else None,
+                        Path("downloaded.csv") if downloaded is not None else None,
+                    )
+                execute.assert_not_called()
+                self.assertIn("missing or empty", result.error_message)
+                self.assertIsNone(result.plot_path)
+                self.assertIsNone(result.df_file_path)
+
+    def test_either_nonempty_dataset_allows_execution(self) -> None:
+        usable = pd.DataFrame({"value": [1]})
+        empty = pd.DataFrame(columns=["value"])
+        for extracted, downloaded in (
+            (usable, None),
+            (None, usable),
+            (usable, empty),
+            (empty, usable),
+        ):
+            values = [frame for frame in (extracted, downloaded) if frame is not None]
+            with patch("src.server.plot_server.pd.read_csv", side_effect=values):
+                result = execute_python_code(
+                    AnalyserResponse(python_code="pass", code_summary="summary"),
+                    Path("extracted.csv") if extracted is not None else None,
+                    Path("downloaded.csv") if downloaded is not None else None,
+                )
+            self.assertIsNone(result.error_message)
 
 
 class SqliteContracts(unittest.TestCase):

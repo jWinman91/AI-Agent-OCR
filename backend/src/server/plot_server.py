@@ -28,6 +28,17 @@ def execute_python_code(
     df_download = (
         pd.read_csv(downloaded_data_file_path) if downloaded_data_file_path else None
     )
+    if (df is None or df.empty) and (df_download is None or df_download.empty):
+        return AnalyserResult(
+            df_file_path=None,
+            data_file_path=None,
+            plot_path=None,
+            code_summary=analyser_response.code_summary,
+            python_code=analyser_response.python_code,
+            error_message=(
+                "No data available for analysis: both datasets are missing or empty."
+            ),
+        )
     context: dict[str, Any] = {
         "df": df,
         "df_download": df_download,
