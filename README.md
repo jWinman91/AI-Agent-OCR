@@ -43,9 +43,11 @@ uv run --extra dev pre-commit install
 
 Commits check staged Python files with Ruff. Changes to backend Python code or
 typing configuration also run strict mypy checks on all of `backend/src`.
+Backend and frontend test suites run on every commit in separate Python processes.
+The tests use mocks and temporary files; no running models are required.
 The hooks require `uv` on your PATH and do not automatically modify files.
 
-Run both checks across the repository manually:
+Run all checks across the repository manually:
 
 ```bash
 uv run --extra dev pre-commit run --all-files
