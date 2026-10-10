@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict
 
 from loguru import logger
 from pydantic_ai import Agent, BinaryContent
-from pydantic_ai.models.openai import ModelSettings, OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from src.agents.output_validator import OutputValidator
 from src.utils.data_models import AgentResponse, AgentResult, ConfigModelBuild

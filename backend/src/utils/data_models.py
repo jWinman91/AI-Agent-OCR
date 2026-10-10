@@ -129,6 +129,7 @@ class AnalyserResult(BaseModel):
     data_file_path: Path | None
     plot_path: Path | None
     code_summary: str
+    python_code: str
     error_message: str | None = None
 
 

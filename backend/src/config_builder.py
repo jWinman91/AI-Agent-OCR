@@ -47,14 +47,23 @@ class ConfigBuilder:
             return {}
         return dict(config)
 
-    def load_config_from_db(self, config_name: str) -> ConfigModelDB:
+    def load_config_from_db(
+        self,
+        config_name: str,
+        full_prompt: bool = False,
+    ) -> ConfigModelDB:
         """
         Loads a configuration from the database by its name.
 
         :param config_name: Name of the configuration to load.
         :return: ConfigModelDB instance containing the configuration data.
         """
-        config = self.SQLITE_HANDLER.get_config(config_name)
+        if full_prompt:
+            config = self.build_config()[config_name].model_dump()
+            config["system_prompt_user"] = config.pop("system_prompt")
+            config["system_prompt_template"] = ""
+        else:
+            config = self.SQLITE_HANDLER.get_config(config_name)
         return ConfigModelDB(**config)
 
     def load_all_configs_from_db(self) -> Dict[str, ConfigModelDB]:

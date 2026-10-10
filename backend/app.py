@@ -80,6 +80,7 @@ class AiAgentOcrApp:
         @self.app.get("/get_config/")
         async def get_config(
             config_name: Literal["data_extractor", "analyser"],
+            full_prompt: bool = False,
         ) -> ConfigModelUser:
             """
             Retrieves a configuration from the database.
@@ -88,7 +89,8 @@ class AiAgentOcrApp:
             :return: Configuration model
             """
             config_model_db = self.CONFIG_BUILDER.load_config_from_db(
-                config_name=config_name
+                config_name=config_name,
+                full_prompt=full_prompt,
             )
             return ConfigModelUser(**config_model_db.model_dump())
 

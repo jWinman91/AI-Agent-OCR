@@ -283,6 +283,14 @@ class AgentRunner:
         :param system_prompt_args: Additional arguments for the system prompt.
         :return: The analyser's response containing plot details.
         """
+
+        def execute_analyser_code(response: AnalyserResponse) -> AnalyserResult:
+            return execute_python_code(
+                response,
+                system_prompt_args.get("data_file_path"),
+                system_prompt_args.get("downloaded_data_file_path"),
+            )
+
         # Add dataset metadata to system prompt args for analyser
         system_prompt_args["dataset_metadata"] = get_dataset_metadata(
             system_prompt_args["data_file_path"]
@@ -306,15 +314,39 @@ class AgentRunner:
                 python_code="str",
                 code_summary="str",
             ),
-            tool_execution_func=lambda analyser_response: execute_python_code(
-                analyser_response,
-                system_prompt_args.get("data_file_path"),
-                system_prompt_args.get("downloaded_data_file_path"),
-            ),
+            tool_execution_func=execute_analyser_code,
         )
 
+        if analyser_res.error_message is None:
+            return self._error_handling(
+                agent_name="analyser",
+                agent_result=analyser_res,
+            )
+
+        logger.error("Analyser agent failed:\n{}", analyser_res.error_message)
+        code_repair = self.agents.create_agent(
+            agent_name="code_repair",
+            config=self.CONFIG["code_repair"],
+            output_type=AnalyserResponse,
+            system_prompt_args=system_prompt_args,
+        )
+        repair_prompt = (
+            f"Original analysis request:\n{analyser_prompt}\n\n"
+            f"Failed Python code:\n<CODE>\n"
+            f"{analyser_res.python_code}\n</CODE>\n\n"
+            f"Execution traceback:\n{analyser_res.error_message}"
+        )
+        analyser_res = await self.agents.run_agent(
+            agent=code_repair,
+            user_prompt=repair_prompt,
+            output_type_example=AnalyserResponse(
+                python_code="str",
+                code_summary="str",
+            ),
+            tool_execution_func=execute_analyser_code,
+        )
         return self._error_handling(
-            agent_name="analyser",
+            agent_name="code_repair",
             agent_result=analyser_res,
         )
 

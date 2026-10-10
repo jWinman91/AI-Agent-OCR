@@ -41,6 +41,7 @@ def execute_python_code(
             data_file_path=data_file_path or downloaded_data_file_path,
             plot_path=context["plot_path"],
             code_summary=analyser_response.code_summary,
+            python_code=analyser_response.python_code,
             error_message=None,
         )
     except Exception as e:
@@ -49,6 +50,7 @@ def execute_python_code(
             data_file_path=None,
             plot_path=None,
             code_summary=analyser_response.code_summary,
+            python_code=analyser_response.python_code,
             error_message=traceback.format_exc(),
         )
 
