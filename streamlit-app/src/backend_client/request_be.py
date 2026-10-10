@@ -1,3 +1,4 @@
+import os
 from typing import Any, List, Literal
 
 import requests
@@ -22,6 +23,33 @@ class BeRequest:
         :param protocol: Protocol to use for the request (default is "http").
         """
         self._url = f"{protocol}://{ip}:{port}"
+
+    def _request(self, method: str, path: str, **kwargs: object) -> requests.Response:
+        read_timeout = 300 if "files" in kwargs or "/download_" in path else 60
+        if path.strip("/") in {"run_agents", "run_single_agent"}:
+            try:
+                read_timeout = float(
+                    os.environ.get("STREAMLIT_AGENT_READ_TIMEOUT_SECONDS", "1800")
+                )
+                if not 0 < read_timeout < float("inf"):
+                    raise ValueError
+            except ValueError as error:
+                raise RuntimeError(
+                    "Agent read timeout must be a positive number."
+                ) from error
+        try:
+            return requests.request(
+                method, f"{self._url}/{path}", timeout=(5, read_timeout), **kwargs
+            )
+        except requests.Timeout as error:
+            raise RuntimeError(
+                "Backend request timed out. Agent work may still be running; "
+                "do not retry immediately."
+            ) from error
+        except requests.RequestException as error:
+            raise RuntimeError(
+                "Cannot reach the backend. Check that it is running."
+            ) from error
 
     def raise_error(
         self,
@@ -56,11 +84,10 @@ class BeRequest:
         :return: Dictionary containing the response from the backend.
         """
         logger.info(f"Sending GET request to {self._url}/{path}")
-        url = f"{self._url}/{path}"
         if params:
-            response = requests.get(url, params=params)
+            response = self._request("GET", path, params=params)
         else:
-            response = requests.get(url)
+            response = self._request("GET", path)
 
         _ = self.raise_error("GET", BeResponse(response=response))
 
@@ -84,7 +111,7 @@ class BeRequest:
         """
         logger.info(f"Sending POST request to {self._url}/{path} without params.")
 
-        response = requests.post(f"{self._url}/{path}")
+        response = self._request("POST", path)
         response = self.raise_error("POST", BeResponse(response=response))
 
         return response.json()
@@ -106,11 +133,11 @@ class BeRequest:
         logger.info(f"Sending POST request to {self._url}/{path} with data {data}")
 
         if payload_type == "json":
-            response = requests.post(f"{self._url}/{path}", json=data)
+            response = self._request("POST", path, json=data)
         elif payload_type == "params":
-            response = requests.post(f"{self._url}/{path}", params=data)
+            response = self._request("POST", path, params=data)
         elif payload_type == "data":
-            response = requests.post(f"{self._url}/{path}", data=data)
+            response = self._request("POST", path, data=data)
         else:
             raise ValueError(f"Invalid payload_type: {payload_type}")
 
@@ -124,7 +151,7 @@ class BeRequest:
         path: str,
         config_name: Literal["data_extractor", "analyser"],
         config: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> bool | None:
         """
         Sends a POST request to the backend with a configuration dictionary.
 
@@ -135,11 +162,16 @@ class BeRequest:
         """
         logger.info(f"Sending POST request to {self._url}/{path} with config {config}")
 
-        response = requests.post(
-            f"{self._url}/{path}", params={"config_name": config_name}, json=config
+        response = self._request(
+            "POST", path, params={"config_name": config_name}, json=config
         )
 
-        return self.raise_error("POST", BeResponse(response))
+        result = self.raise_error("POST", BeResponse(response)).json()
+        if result is not None and type(result) is not bool:
+            raise RuntimeError(
+                "Backend returned an invalid configuration-save response."
+            )
+        return result
 
     @dispatch(str, dict, list)
     def post(
@@ -167,9 +199,9 @@ class BeRequest:
         files = [("files", data_file) for data_file in data_files]
 
         if params:
-            response = requests.post(f"{self._url}/{path}", params=params, files=files)
+            response = self._request("POST", path, params=params, files=files)
         else:
-            response = requests.post(f"{self._url}/{path}", files=files)
+            response = self._request("POST", path, files=files)
 
         return self.raise_error("POST", BeResponse(response)).json()
 
@@ -196,8 +228,8 @@ class BeRequest:
 
         files = [("file", data_file)]
         if params:
-            response = requests.post(f"{self._url}/{path}", params=params, files=files)
+            response = self._request("POST", path, params=params, files=files)
         else:
-            response = requests.post(f"{self._url}/{path}", files=files)
+            response = self._request("POST", path, files=files)
 
         return self.raise_error("POST", BeResponse(response)).json()

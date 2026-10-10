@@ -1,4 +1,5 @@
 from io import BytesIO
+from typing import Any
 
 from PIL import Image
 from requests import Response
@@ -14,11 +15,14 @@ class BeResponse:
     def is_error(self) -> bool:
         return not self.response.status_code == 200
 
-    def reason(self) -> None:
+    def reason(self) -> str:
         return self.response.reason
 
-    def json(self) -> None:
-        return self.response.json()
+    def json(self) -> dict[str, Any] | list[Any] | str | int | float | bool | None:
+        try:
+            return self.response.json()
+        except ValueError as error:
+            raise RuntimeError("Backend returned invalid JSON.") from error
 
     def image_bytes(self) -> Image:
         """

@@ -29,48 +29,29 @@ class SingleAgent(ParentRun):
                             "user_prompt": user_prompt,
                             "agent_name": "data_extractor",
                             "previous_error": st.session_state.get(
-                                "previous_error", None
+                                "previous_error_extractor", None
                             ),
                         },
                         payload_type="data",
                     )
                     if response_json.get("error_message"):
                         st.error(response_json["error_message"])
-                        st.session_state["previous_error"] = response_json[
+                        st.session_state["previous_error_extractor"] = response_json[
                             "error_message"
                         ]
 
                         return
 
-                    # Fetch generated data and plot from backend
-                    st.session_state["df"] = self._get_csv(
-                        response_json["data_file_path"]
-                    )
-
-                    with st.container(border=True):
-                        # display head of dataframe
-                        st.dataframe(st.session_state["df"].head())
-                        st.download_button(
-                            label="Download data as CSV",
-                            data=self._convert_df(st.session_state["df"]),
-                            file_name="df.csv",
-                            mime="text/csv",
-                        )
+                    st.session_state["previous_error_extractor"] = None
+                    self._load_result(response_json, extractor=True)
                 except Exception as e:
                     st.error(f"Error running Data Extractor Agent: {e}")
                     return
-        elif st.session_state.get("df") is not None:
-            st.dataframe(st.session_state["df"].head())
-            st.download_button(
-                label="Download data as CSV",
-                data=self._convert_df(st.session_state["df"]),
-                file_name="df.csv",
-                mime="text/csv",
-            )
+                finally:
+                    st.session_state["uploaded_images"] = []
+        self._render_result(preview=True)
 
-            logger.info("Data Extractor Agent run completed.")
-
-    def build_upload_data_widget(self) -> None:
+    def build_upload_data_widget(self) -> bool:
         """
         Builds the Streamlit widget to run the Analyser Agent in single mode.
         """
@@ -83,11 +64,14 @@ class SingleAgent(ParentRun):
             submit_button = st.form_submit_button("Upload Data File")
 
             if submit_button and uploaded_file is not None:
-                success = self._request_be.post(
+                success = self._upload_files(
                     "uploaddatafile",
                     {},
                     uploaded_file,
                 )
+                if not success:
+                    st.session_state["uploaded_data_file"] = None
+                    return False
                 st.session_state["uploaded_data_file"] = uploaded_file.name
                 logger.info(f"Upload successful: {success}.")
 
@@ -127,55 +111,27 @@ class SingleAgent(ParentRun):
                             "user_prompt": user_prompt,
                             "agent_name": "analyser",
                             "previous_error": st.session_state.get(
-                                "previous_error", None
+                                "previous_error_analyser", None
                             ),
                         },
                         payload_type="data",
                     )
                     if response_json.get("error_message"):
                         st.error(response_json["error_message"])
-                        st.session_state["previous_error"] = response_json[
+                        st.session_state["previous_error_analyser"] = response_json[
                             "error_message"
                         ]
                         return
-                    st.session_state["code_summary"] = response_json["code_summary"]
+                    st.session_state["previous_error_analyser"] = None
                     logger.info(f"Plot generation response: {response_json}.")
-
-                    image_path = response_json.get("plot_path", None)
-                    data_file_path = response_json.get("data_file_path", None)
-
-                    if data_file_path:
-                        st.session_state["df"] = self._get_csv(data_file_path)
-                        with st.container(border=True):
-                            st.dataframe(st.session_state["df"])
-
-                    if image_path:
-                        st.session_state["image"] = self._request_be.get(
-                            path=f"plot_path/{response_json.get('plot_path')}/download_plot",
-                            params=None,
-                            data_type="image",
-                        )
-
-                        with st.container(border=True):
-                            st.image(
-                                st.session_state["image"],
-                                caption=st.session_state["code_summary"],
-                            )
-
-                    if not data_file_path and not image_path:
-                        st.error("No plot or data generated.")
+                    self._load_result(response_json)
 
                 except Exception as e:
                     logger.error(f"Error generating plot: {e}")
                     st.error(f"Error generating plot: {e}")
-        elif st.session_state.get("df") is not None:
-            with st.container(border=True):
-                st.dataframe(st.session_state["df"])
-        elif st.session_state.get("image") is not None:
-            with st.container(border=True):
-                st.image(
-                    st.session_state["image"], caption=st.session_state["code_summary"]
-                )
+                finally:
+                    st.session_state["uploaded_data_file"] = None
+        self._render_result()
 
     def build_page(self) -> None:
         """

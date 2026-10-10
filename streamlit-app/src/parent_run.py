@@ -1,9 +1,11 @@
 from io import BytesIO
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 from loguru import logger
 from src.backend_client.request_be import BeRequest
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 
 class ParentRun:
@@ -29,7 +31,12 @@ class ParentRun:
         :param protocol: Protocol to use for the request (default is "http").
         """
         self._request_be = BeRequest(ip, port, protocol)
-        st.session_state["update_agents"] = self._request_be.post("update_agents")
+        try:
+            if self._request_be.post("update_agents") is not True:
+                raise RuntimeError("Backend could not initialize agents.")
+        except Exception as error:
+            st.error(f"Cannot initialize agents: {error}")
+            st.stop()
 
         st.session_state["uploaded_data_file"] = st.session_state.get(
             "uploaded_data_file", None
@@ -41,9 +48,65 @@ class ParentRun:
         st.session_state["df"] = st.session_state.get("df", None)
         st.session_state["image"] = st.session_state.get("image", None)
         st.session_state["code_summary"] = st.session_state.get("code_summary", None)
-        st.session_state["previous_error"] = st.session_state.get(
-            "previous_error", None
-        )
+        for workflow in ("extractor", "analyser", "pipeline"):
+            st.session_state.setdefault(f"previous_error_{workflow}", None)
+
+    @staticmethod
+    def _output_path(value: object) -> str | None:
+        return str(value) if value is not None and str(value) not in {"", "."} else None
+
+    def _load_result(self, response: dict[str, Any], extractor: bool = False) -> None:
+        generated_csv = self._output_path(response.get("df_file_path"))
+        input_csv = self._output_path(response.get("data_file_path"))
+        plot = self._output_path(response.get("plot_path"))
+        st.session_state["df"] = None
+        st.session_state["image"] = None
+        st.session_state["code_summary"] = response.get("code_summary", "")
+        if not (generated_csv or plot or (extractor and input_csv)):
+            st.error("No plot or analysis data generated.")
+        csv_path = generated_csv or (input_csv if extractor else None)
+        if csv_path:
+            try:
+                st.session_state["df"] = self._get_csv(csv_path)
+            except Exception as error:
+                st.error(f"Cannot download data: {error}")
+        if plot:
+            try:
+                st.session_state["image"] = self._request_be.get(
+                    path=f"plot_path/{plot}/download_plot", data_type="image"
+                )
+            except Exception as error:
+                st.error(f"Cannot download plot: {error}")
+
+    def _render_result(self, preview: bool = False) -> None:
+        frame = st.session_state.get("df")
+        if frame is not None:
+            with st.container(border=True):
+                st.dataframe(frame.head() if preview else frame)
+                st.download_button(
+                    "Download data as CSV",
+                    self._convert_df(frame),
+                    file_name="df.csv",
+                    mime="text/csv",
+                )
+        image = st.session_state.get("image")
+        if image is not None:
+            with st.container(border=True):
+                st.image(image, caption=st.session_state.get("code_summary"))
+
+    def _upload_files(
+        self,
+        path: str,
+        params: dict[str, str],
+        files: UploadedFile | list[UploadedFile],
+    ) -> bool:
+        try:
+            if self._request_be.post(path, params, files) is not True:
+                raise RuntimeError("Backend did not confirm the upload.")
+            return True
+        except Exception as error:
+            st.error(f"Upload failed: {error}")
+            return False
 
     def _get_csv(self, file_name: str) -> pd.DataFrame:
         """
@@ -103,21 +166,27 @@ class ParentRun:
 
                     pdf_file = uploaded_images[0]
                     with st.spinner("Uploading PDF..."):
-                        success = self._request_be.post(
+                        success = self._upload_files(
                             "uploadpdf",
                             {"resize": resize.lower()},
                             pdf_file,
                         )
+                        if not success:
+                            st.session_state["uploaded_images"] = []
+                            return False
                         st.session_state["uploaded_images"] = [pdf_file.name]
 
                 else:
                     with st.spinner("Uploading images..."):
                         # Upload images to the backend
-                        success = self._request_be.post(
+                        success = self._upload_files(
                             "uploadimages",
                             {"resize": resize.lower()},
                             uploaded_images,
                         )
+                        if not success:
+                            st.session_state["uploaded_images"] = []
+                            return False
                         st.session_state["uploaded_images"] = [
                             image.name for image in uploaded_images
                         ]
@@ -134,4 +203,4 @@ class ParentRun:
                     )
                     return True
                 return False
-            return True
+            return bool(st.session_state.get("uploaded_images"))

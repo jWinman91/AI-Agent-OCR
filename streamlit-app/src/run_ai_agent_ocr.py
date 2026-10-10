@@ -29,58 +29,27 @@ class RunAiAgentOcr(ParentRun):
                         {
                             "user_prompt": user_prompt,
                             "previous_error": st.session_state.get(
-                                "previous_error", None
+                                "previous_error_pipeline", None
                             ),
                         },
                         payload_type="data",
                     )
                     if response_json.get("error_message"):
                         st.error(response_json["error_message"])
-                        st.session_state["previous_error"] = response_json[
+                        st.session_state["previous_error_pipeline"] = response_json[
                             "error_message"
                         ]
                         return
-                    st.session_state["code_summary"] = response_json["code_summary"]
-                    st.session_state["previous_error"] = None
+                    st.session_state["previous_error_pipeline"] = None
                     logger.info(f"Plot generation response: {response_json}.")
+                    self._load_result(response_json)
 
-                    # Fetch generated data and plot from backend
-                    st.session_state["df"] = self._get_csv(
-                        response_json["data_file_path"]
-                    )
-                    st.session_state["image"] = self._request_be.get(
-                        path=f"plot_path/{response_json.get('plot_path')}/download_plot",
-                        params=None,
-                        data_type="image",
-                    )
-
-                    with st.container(border=True):
-                        st.download_button(
-                            label="Download data as CSV",
-                            data=self._convert_df(st.session_state["df"]),
-                            file_name="df.csv",
-                            mime="text/csv",
-                        )
-                        st.image(
-                            st.session_state["image"],
-                            caption=response_json["code_summary"],
-                        )
-                        logger.info(f"Plot generation successful: {response_json}.")
-
-                except RuntimeError as e:
+                except Exception as e:
                     st.error(f"Error generating plot: {e}")
                     return
-        elif st.session_state.get("image") is not None:
-            with st.container(border=True):
-                st.download_button(
-                    label="Download data as CSV",
-                    data=self._convert_df(st.session_state["df"]),
-                    file_name="df.csv",
-                    mime="text/csv",
-                )
-                st.image(
-                    st.session_state["image"], caption=st.session_state["code_summary"]
-                )
+                finally:
+                    st.session_state["uploaded_images"] = []
+        self._render_result()
 
     def build_page(self) -> None:
         """

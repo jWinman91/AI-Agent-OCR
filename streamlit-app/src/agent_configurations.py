@@ -1,7 +1,7 @@
 from typing import Literal
 
 import streamlit as st
-from src.backend_client.ollama_retriever import get_ollama_models
+from src.backend_client.model_retriever import get_ollama_models, get_openai_models
 from src.backend_client.request_be import BeRequest
 
 
@@ -57,6 +57,14 @@ class AgentConfigurations:
 
         :param agent_name: Name of the agent ("data_extractor" or "analyser").
         """
+        if st.session_state.pop(f"pending_reset_{agent_name}", False):
+            for prefix in (
+                "system_prompt",
+                "openai_model_selectbox",
+                "model_provider_selectbox",
+                "ollama_model_selectbox",
+            ):
+                st.session_state.pop(f"{prefix}_{agent_name}", None)
         st.subheader(f"{agent_name.capitalize()} Configuration")
         config = self._request_be.get(
             path="get_config",
@@ -70,6 +78,7 @@ class AgentConfigurations:
             "System Prompt",
             value=config.get("system_prompt_user", ""),
             height=300,
+            key=f"system_prompt_{agent_name}",
         )
 
         model_provider_preset = config.get("model_provider", "openai")
@@ -77,41 +86,46 @@ class AgentConfigurations:
             "Model Provider",
             options=["openai", "ollama"],
             index=["openai", "ollama"].index(
-                model_provider_preset if model_provider_preset else "openai"
+                model_provider_preset
+                if model_provider_preset in {"openai", "ollama"}
+                else "openai"
             ),
             key=f"model_provider_selectbox_{agent_name}",
         )
 
+        model = None
         if model_provider == "ollama":
-            ollama_models = get_ollama_models() + ["model not found"]
-            index = ollama_models.index(
-                config.get("model", "qwen-7b")
-                if config.get("model", "qwen-7b") in ollama_models
-                else ollama_models[-1]
-            )
-            print(ollama_models, index)
-            if index == len(ollama_models) - 1:
-                st.error(
-                    "Model not found in Ollama models. "
-                    "Please check your Ollama installation."
+            try:
+                ollama_models = get_ollama_models()
+            except RuntimeError as error:
+                st.error(str(error))
+                ollama_models = []
+            if ollama_models:
+                saved_model = config.get("model")
+                if saved_model not in ollama_models:
+                    st.warning("Configured model is unavailable. Select a replacement.")
+                model_key = f"ollama_model_selectbox_{agent_name}"
+                if st.session_state.get(model_key) not in ollama_models:
+                    st.session_state.pop(model_key, None)
+                model = st.selectbox(
+                    "Model",
+                    options=ollama_models,
+                    index=ollama_models.index(saved_model)
+                    if saved_model in ollama_models
+                    else 0,
+                    key=model_key,
                 )
-                return
-            model = st.selectbox(
-                "Model",
-                options=ollama_models,
-                index=index,
-                key=f"ollama_model_selectbox_{agent_name}",
-            )
-        else:
-            model = st.text_input(
-                "Model",
-                value=config.get(
-                    "model", "gpt-5" if model_provider == "openai" else "qwen-7b"
-                ),
-            )
-
+            else:
+                st.warning(
+                    "No Ollama models available. Start Ollama and pull a model, "
+                    "or select OpenAI."
+                )
         if model_provider == "openai":
-            api_key = st.text_input("API Key", type="password")
+            api_key = st.text_input(
+                "API Key",
+                type="password",
+                key=f"api_key_{agent_name}",
+            )
 
             # set the API key in the backend
             if api_key:
@@ -121,10 +135,29 @@ class AgentConfigurations:
                     payload_type="params",
                 )
 
+            openai_models = get_openai_models()
+            if openai_models:
+                saved_model = config.get("model")
+                model_key = f"openai_model_selectbox_{agent_name}"
+                if st.session_state.get(model_key) not in openai_models:
+                    st.session_state.pop(model_key, None)
+                model = st.selectbox(
+                    "Model",
+                    options=openai_models,
+                    index=openai_models.index(saved_model)
+                    if saved_model in openai_models
+                    else 0,
+                    key=model_key,
+                    help="Maintained model list; availability depends on your account.",
+                )
+            else:
+                st.warning("No OpenAI models available in the maintained list.")
+
         if st.button(
             "Save Configuration",
             type="secondary",
             key=f"save_configuration_button_{agent_name}",
+            disabled=not model,
         ):
             config_data = {
                 "system_prompt_user": system_prompt,
@@ -137,7 +170,7 @@ class AgentConfigurations:
                 agent_name,
                 config_data,
             )
-            if success:
+            if success is True:
                 st.session_state[f"save_configuration_{agent_name}"] = True
                 st.rerun()
             else:
@@ -166,7 +199,8 @@ class AgentConfigurations:
                 {"config_name": agent_name},
                 payload_type="params",
             )
-            if success:
+            if success is True:
+                st.session_state[f"pending_reset_{agent_name}"] = True
                 st.session_state[f"reset_configuration_{agent_name}"] = True
                 st.rerun()
             else:
@@ -182,9 +216,15 @@ class AgentConfigurations:
         """
         for agent_name in ["data_extractor", "analyser"]:
             with st.container(border=True):
-                with st.container(border=True):
-                    self.build_configuration_form(agent_name=agent_name)
-                self.build_reset_button(agent_name=agent_name)
+                try:
+                    with st.container(border=True):
+                        self.build_configuration_form(agent_name=agent_name)
+                except Exception as error:
+                    st.error(f"Cannot configure {agent_name}: {error}")
+                try:
+                    self.build_reset_button(agent_name=agent_name)
+                except Exception as error:
+                    st.error(f"Cannot reset {agent_name}: {error}")
 
 
 agent_configuration = AgentConfigurations()
