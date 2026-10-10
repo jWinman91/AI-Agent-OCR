@@ -3,7 +3,7 @@ name = "ai-agent-ocr"
 version = "0.1.0"
 description = "AI Agent OCR backend and Streamlit app"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 license = { file = "LICENSE" }
 authors = [
   { name = "AI-Agent-OCR Maintainers" }
@@ -48,4 +48,9 @@ dev = [
   "pre-commit",
   "pandas-stubs",
   "types-PyYAML",
+]
+
+[tool.uv]
+required-environments = [
+  "sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
