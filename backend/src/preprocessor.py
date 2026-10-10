@@ -1,15 +1,35 @@
 import io
+from pathlib import Path
 
 import cv2
 import fitz  # PyMuPDF
 import numpy as np
+import pandas as pd
 import pymupdf4llm
 from fastapi import UploadFile
+from loguru import logger
 from pdf2image import convert_from_bytes
 from PIL import Image
 
 
 class Preprocessor:
+    def normalize_data_file(self, file: UploadFile) -> UploadFile:
+        filename = file.filename or ""
+        file.file.seek(0)
+        if Path(filename).suffix.lower() == ".csv":
+            return file
+        try:
+            frame = pd.read_excel(file.file, sheet_name=0)
+            content = frame.to_csv(index=False).encode("utf-8")
+        except Exception as error:
+            raise ValueError(
+                "Cannot read the first worksheet of the Excel file."
+            ) from error
+        return UploadFile(
+            filename=str(Path(filename).with_suffix(".csv")),
+            file=io.BytesIO(content),
+        )
+
     def _get_pdf_bytes(self, pdf_file: UploadFile) -> bytes:
         """Read PDF bytes safely from an UploadFile by rewinding the stream first."""
         pdf_file.file.seek(0)
@@ -130,24 +150,18 @@ class Preprocessor:
 
         pdf_bytes = self._get_pdf_bytes(pdf_file)
 
-        doc = fitz.open(
-            stream=pdf_bytes,
-            filetype="pdf",
-        )
-        num_pages = doc.page_count
-
-        text_files = {
-            f"{pdf_file.filename}_page_{i + 1}.txt": pymupdf4llm.to_text(
-                doc,
-                pages=[i],
-                force_ocr=True,
-                ocr_language="eng+deu",
-            )
-            for i in range(num_pages)
-        }
-
-        # if any page text is empty, return empty dictionary
-        if any(not text.strip() for text in text_files.values()):
-            return {}
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            text_files = {
+                f"{pdf_file.filename}_page_{i + 1}.txt": pymupdf4llm.to_text(
+                    doc,
+                    pages=[i],
+                    force_ocr=True,
+                    ocr_language="eng+deu",
+                )
+                for i in range(doc.page_count)
+            }
+        for page_number, text in enumerate(text_files.values(), start=1):
+            if not text.strip():
+                logger.warning("No extracted text for PDF page {}", page_number)
 
         return text_files

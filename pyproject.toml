@@ -16,6 +16,8 @@ dependencies = [
   "uvicorn",
   "pydantic-ai",
   "pandas",
+  "openpyxl",
+  "xlrd",
   "pyaml",
   "pillow",
   "matplotlib",

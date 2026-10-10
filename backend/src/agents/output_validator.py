@@ -58,7 +58,7 @@ class OutputValidator:
         :return: A dictionary representing the parsed JSON.
         """
         try:
-            return cast(dict[str, Any], json.loads(text))
+            return self._json_object(text)
         except json.JSONDecodeError as e:
             logger.error(
                 f"Initial JSON parsing failed: {e},"
@@ -102,7 +102,7 @@ class OutputValidator:
                 )
             fixed_json = cast(FixJsonResponse, fixed_json)
             if not fixed_json.error_message:
-                return cast(dict[str, Any], json.loads(fixed_json.fixed_json))
+                return self._json_object(fixed_json.fixed_json)
             else:
                 logger.error(
                     f"Error in parsing JSON. "
@@ -114,6 +114,13 @@ class OutputValidator:
                         f"FixJson agent failed with error: {fixed_json.error_message}"
                     )
                 )
+
+    @staticmethod
+    def _json_object(text: str) -> dict[str, Any]:
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Agent output must be a JSON object.")
+        return parsed
 
     @staticmethod
     def extract_first_json_object(text: str) -> dict[str, Any] | None:
@@ -154,9 +161,13 @@ class OutputValidator:
         """
         # Special handling for AnalyserResponse which contains code
         if type(expected_json) is AnalyserResponse:
+            code = self.extract_tag("CODE", agent_response)
+            summary = self.extract_tag("SUMMARY", agent_response)
+            if not code or summary is None:
+                raise ValueError("Analyser output requires CODE and SUMMARY sections.")
             return AnalyserResponse(
-                python_code=cast(str, self.extract_tag("CODE", agent_response)),
-                code_summary=cast(str, self.extract_tag("SUMMARY", agent_response)),
+                python_code=code,
+                code_summary=summary,
             )
         if type(expected_json) is str:
             return agent_response
@@ -167,7 +178,7 @@ class OutputValidator:
             expected_json=expected_json,
         )
         try:
-            return self.try_output_models(parsed_output)
+            return type(expected_json).model_validate(parsed_output)
         except ValidationError as e:
             logger.error(
                 f"Validation error for {agent_name}: {e},"
@@ -190,7 +201,9 @@ class OutputValidator:
             )
             fixed_json = cast(FixJsonResponse, fixed_json)
             if not fixed_json.error_message:
-                return self.try_output_models(json.loads(fixed_json.fixed_json))
+                return type(expected_json).model_validate(
+                    self._json_object(fixed_json.fixed_json)
+                )
             else:
                 raise (
                     ValueError(

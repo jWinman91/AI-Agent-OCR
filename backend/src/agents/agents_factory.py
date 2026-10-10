@@ -1,11 +1,18 @@
 import copy
 import logging
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Dict, TypeVar, cast, overload
 
 from loguru import logger
+from PIL import Image
 from pydantic_ai import Agent, BinaryContent
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from src.agents.output_validator import OutputValidator
@@ -119,6 +126,7 @@ class AgentsFactory:
         text_file_url: str | Path | None = None,
         *,
         tool_execution_func: Callable[[ResponseT], ResultT],
+        error_result_factory: Callable[[str], ResultT] | None = None,
     ) -> ResultT: ...
 
     async def run_agent(
@@ -129,6 +137,7 @@ class AgentsFactory:
         image_url: str | Path | None = None,
         text_file_url: str | Path | None = None,
         tool_execution_func: Callable[[ResponseT], ResultT] | None = None,
+        error_result_factory: Callable[[str], ResultT] | None = None,
     ) -> ResponseT | ResultT:
         """
         Runs an agent with the given user prompt and optional image.
@@ -141,6 +150,17 @@ class AgentsFactory:
         :param tool_execution_func: Optional function to execute tools
         :return: The agent's response, validated explicitly if it's a string output.
         """
+
+        def failure(message: str) -> ResponseT | ResultT:
+            logger.error("Agent {} failed: {}", agent.name, message)
+            if tool_execution_func is not None:
+                if error_result_factory is None:
+                    raise RuntimeError(message)
+                return error_result_factory(message)
+            failed_response = copy.deepcopy(output_type_example)
+            failed_response.error_message = message
+            return failed_response
+
         t0 = time.time()
         # check if image_url and text_file_url are not empty
         if text_file_url:
@@ -154,22 +174,33 @@ class AgentsFactory:
                 f"</EXTRACTED PDF TEXT>"
             )
 
+        messages: list[str | BinaryContent]
         if image_url:
             image_path = Path(image_url)
-            with image_path.open("rb") as f:
-                image_content = f.read()
+            try:
+                image_content = image_path.read_bytes()
+                with Image.open(BytesIO(image_content)) as image:
+                    media_type = {"PNG": "image/png", "JPEG": "image/jpeg"}.get(
+                        image.format or ""
+                    )
+                    image.verify()
+                if media_type is None:
+                    raise ValueError("Only PNG and JPEG images are supported.")
+            except (OSError, ValueError) as error:
+                return failure(f"Cannot read image input: {error}")
             binary_content = BinaryContent(
                 data=image_content,
-                media_type="image/png",
+                media_type=media_type,
             )
-            response = await agent.run(
-                [
-                    user_prompt,
-                    binary_content,
-                ]
-            )
+            messages = [user_prompt, binary_content]
         else:
-            response = await agent.run([user_prompt])
+            messages = [user_prompt]
+
+        try:
+            response = await agent.run(messages)
+        except (ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded) as error:
+            logger.exception("Model request failed for {}", agent.name)
+            return failure(f"Model request failed: {error}")
 
         image_log = f" with image {image_url}" if image_url is not None else ""
 
@@ -178,8 +209,8 @@ class AgentsFactory:
             f"{image_log}: {response}"
         )
 
-        if type(response.output) is str:
-            try:
+        try:
+            if type(response.output) is str:
                 structured_output = cast(
                     ResponseT,
                     await self.OUTPUT_VALIDATOR.validate_output(
@@ -188,17 +219,15 @@ class AgentsFactory:
                         output_type_example,
                     ),
                 )
-            except Exception as e:
-                logger.error(f"Error validating output for {agent.name}: {e}")
-                structured_output = copy.deepcopy(output_type_example)
-                setattr(
-                    structured_output,
-                    "error_message",
-                    f"Error validating output: {str(e)}",
+            else:
+                structured_output = cast(
+                    ResponseT, type(output_type_example).model_validate(response.output)
                 )
-                return structured_output
-        else:
-            structured_output = cast(ResponseT, response.output)
+        except (ValueError, TypeError) as error:
+            return failure(f"Error validating output: {error}")
+
+        if structured_output.error_message:
+            return failure(structured_output.error_message)
 
         # execute tools if tool execution function is given
         # NOTE: the tool execution function will always return a result,

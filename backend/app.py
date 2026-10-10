@@ -245,7 +245,10 @@ class AiAgentOcrApp:
             :return: True if successful
             """
             if not all(
-                file.filename.endswith((".png", ".jpg", ".jpeg")) for file in files
+                self.FILE_MANAGER.validate_filename(file.filename)
+                .lower()
+                .endswith((".png", ".jpg", ".jpeg"))
+                for file in files
             ):
                 raise HTTPException(
                     status_code=422,
@@ -273,6 +276,7 @@ class AiAgentOcrApp:
                 resize_files.append(clahe_file)
 
             self._image_urls = self.FILE_MANAGER.upload_images(resize_files)
+            self._text_file_urls = []
             logger.info(f"Uploaded {len(self._image_urls)} images.")
             return True
 
@@ -290,7 +294,11 @@ class AiAgentOcrApp:
             :param file: PDF file to upload
             :return: True if successful
             """
-            if not file.filename.endswith(".pdf"):
+            if (
+                not self.FILE_MANAGER.validate_filename(file.filename)
+                .lower()
+                .endswith(".pdf")
+            ):
                 raise HTTPException(
                     status_code=422, detail="Only PDF files are allowed"
                 )
@@ -323,12 +331,20 @@ class AiAgentOcrApp:
             :param file: Data file to upload
             :return: True if successful
             """
-            if not file.filename.endswith((".csv", ".xlsx", ".xls")):
+            if (
+                not self.FILE_MANAGER.validate_filename(file.filename)
+                .lower()
+                .endswith((".csv", ".xlsx", ".xls"))
+            ):
                 raise HTTPException(
                     status_code=422, detail="Only CSV or Excel files are allowed"
                 )
 
-            self._data_file_path = self.FILE_MANAGER.upload_data_file(file)
+            try:
+                normalized_file = self.PREPROCESSOR.normalize_data_file(file)
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            self._data_file_path = self.FILE_MANAGER.upload_data_file(normalized_file)
             logger.info(f"Uploaded data file: {self._data_file_path}")
             return True
 
@@ -340,7 +356,9 @@ class AiAgentOcrApp:
             :param plot_path: Name of the file to download
             :return: FileResponse with the requested file
             """
-            file_path = Path(plot_path)
+            file_path = self.FILE_MANAGER.download_path(
+                plot_path, [self.FILE_MANAGER.get_plot_dir()]
+            )
             if file_path.exists() and file_path.is_file():
                 return FileResponse(
                     str(file_path),
@@ -348,7 +366,7 @@ class AiAgentOcrApp:
                     filename=file_path.name,
                 )
             else:
-                raise FileNotFoundError(f"File {plot_path} not found")
+                raise HTTPException(status_code=404, detail="File not found.")
 
         @self.app.get("/df_path/{df_path:path}/download_data")
         async def download_data(df_path: str) -> FileResponse:
@@ -358,7 +376,10 @@ class AiAgentOcrApp:
             :param df_path: Name of the file to download
             :return: FileResponse with the requested file
             """
-            file_path = Path(df_path)
+            file_path = self.FILE_MANAGER.download_path(
+                df_path,
+                [self.FILE_MANAGER.get_data_dir(), self.FILE_MANAGER.get_plot_dir()],
+            )
             if file_path.exists() and file_path.is_file():
                 return FileResponse(
                     file_path,
@@ -366,7 +387,7 @@ class AiAgentOcrApp:
                     filename=file_path.name,
                 )
             else:
-                raise FileNotFoundError(f"File {df_path} not found")
+                raise HTTPException(status_code=404, detail="File not found.")
 
     def run(self) -> None:
         """

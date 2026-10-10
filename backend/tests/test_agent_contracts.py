@@ -1,27 +1,156 @@
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from PIL import Image  # noqa: E402
 from pydantic_ai import BinaryContent  # noqa: E402
+from pydantic_ai.exceptions import ModelAPIError  # noqa: E402
 from src.agents.agents_factory import AgentsFactory  # noqa: E402
 from src.agents.agents_runner import AgentRunner  # noqa: E402
 from src.agents.output_validator import OutputValidator  # noqa: E402
 from src.server.plot_server import execute_python_code  # noqa: E402
 from src.utils.data_models import (  # noqa: E402
     AnalyserResponse,
+    AnalyserResult,
     ConfigModelBuild,
+    DataDownloadResponse,
+    DataDownloadResult,
+    DataExtractorPrompt,
     DataExtractorResponse,
     FixJsonResponse,
+    OrchestratorResponse,
 )
 from src.utils.sqlite_db_handler import SqliteDBHandler  # noqa: E402
 
 
 class AgentContracts(unittest.IsolatedAsyncioTestCase):
+    async def test_malformed_downloader_does_not_execute(self) -> None:
+        factory = AgentsFactory.__new__(AgentsFactory)
+        repair = AsyncMock(return_value=FixJsonResponse(fixed_json='{"data": []}'))
+        factory.OUTPUT_VALIDATOR = OutputValidator(
+            create_agent_func=Mock(),
+            run_agent_func=repair,
+            config=ConfigModelBuild(model="test", system_prompt="test"),
+        )
+        agent = Mock()
+        agent.name = "data_downloader"
+        agent.run = AsyncMock(return_value=SimpleNamespace(output='{"data": []}'))
+        callback = Mock()
+        result = await factory.run_agent(
+            agent,
+            DataDownloadResponse(download_request=[], file_name=Path("data.csv")),
+            "request",
+            tool_execution_func=callback,
+            error_result_factory=lambda message: DataDownloadResult(
+                data_file_path=None, error_message=message
+            ),
+        )
+        self.assertTrue(result.error_message)
+        callback.assert_not_called()
+
+    async def test_validation_and_provider_failures_skip_execution(self) -> None:
+        factory = AgentsFactory.__new__(AgentsFactory)
+        factory.OUTPUT_VALIDATOR = OutputValidator(
+            create_agent_func=Mock(),
+            run_agent_func=AsyncMock(),
+            config=ConfigModelBuild(model="test", system_prompt="test"),
+        )
+        example = AnalyserResponse(
+            python_code="placeholder", code_summary="placeholder"
+        )
+        agent = Mock(name="agent")
+        agent.name = "analyser"
+        agent.run = AsyncMock(return_value=SimpleNamespace(output="missing tags"))
+        callback = Mock()
+
+        def failed(message: str) -> AnalyserResult:
+            return AnalyserResult(
+                df_file_path=None,
+                data_file_path=None,
+                plot_path=None,
+                python_code="",
+                code_summary="",
+                error_message=message,
+            )
+
+        result = await factory.run_agent(
+            agent,
+            example,
+            "request",
+            tool_execution_func=callback,
+            error_result_factory=failed,
+        )
+        self.assertIn("CODE and SUMMARY", result.error_message)
+        callback.assert_not_called()
+        plain = await factory.run_agent(agent, example, "request")
+        self.assertTrue(plain.error_message)
+        agent.run.side_effect = ModelAPIError(
+            model_name="test", message="Connection error"
+        )
+        result = await factory.run_agent(
+            agent,
+            example,
+            "request",
+            tool_execution_func=callback,
+            error_result_factory=failed,
+        )
+        self.assertIn("Connection error", result.error_message)
+        callback.assert_not_called()
+
+    async def test_expected_schema_is_enforced_after_repair(self) -> None:
+        expected = OrchestratorResponse(
+            analyser_prompt="analyse",
+            data_download_prompt="",
+            data_extractor_prompt=DataExtractorPrompt(
+                user_prompt="extract", json_details={}
+            ),
+        )
+        repair = AsyncMock(
+            return_value=FixJsonResponse(fixed_json=expected.model_dump_json())
+        )
+        validator = OutputValidator(
+            create_agent_func=Mock(),
+            run_agent_func=repair,
+            config=ConfigModelBuild(model="test", system_prompt="test"),
+        )
+        response = await validator.validate_output(
+            '{"data": []}', "orchestrator", expected
+        )
+        self.assertIsInstance(response, OrchestratorResponse)
+        repair.assert_awaited_once()
+        repair.return_value = FixJsonResponse(fixed_json='{"data": []}')
+        with self.assertRaises(ValueError):
+            await validator.validate_output('{"data": []}', "orchestrator", expected)
+        with self.assertRaises(ValueError):
+            await validator.parse_json("[]", expected)
+
+    async def test_no_code_failure_does_not_run_repair(self) -> None:
+        runner = AgentRunner.__new__(AgentRunner)
+        runner.CONFIG = {"analyser": Mock()}
+        runner.agents = Mock()
+        runner.agents.run_agent = AsyncMock(
+            return_value=AnalyserResult(
+                df_file_path=None,
+                data_file_path=None,
+                plot_path=None,
+                python_code="",
+                code_summary="",
+                error_message="Provider unavailable",
+            )
+        )
+        with patch("src.agents.agents_runner.get_dataset_metadata", return_value=""):
+            result = await runner.run_analyser(
+                "request", {"data_file_path": None, "downloaded_data_file_path": None}
+            )
+        self.assertIn("Provider unavailable", result.error_message)
+        self.assertEqual(runner.agents.create_agent.call_count, 1)
+
     async def test_parsed_response_and_execution_callback(self) -> None:
         factory = AgentsFactory.__new__(AgentsFactory)
         response = AnalyserResponse(python_code="pass", code_summary="summary")
@@ -49,7 +178,9 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             image = Path(directory) / "page.png"
             text = Path(directory) / "page.txt"
-            image.write_bytes(b"image bytes")
+            content = BytesIO()
+            Image.new("RGB", (2, 2)).save(content, format="PNG")
+            image.write_bytes(content.getvalue())
             text.write_text("PDF text")
             result = await factory.run_agent(
                 agent, response, "extract", image_url=image, text_file_url=text
@@ -58,7 +189,23 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         message = agent.run.call_args.args[0]
         self.assertIn("<EXTRACTED PDF TEXT>:\nPDF text", message[0])
         self.assertIsInstance(message[1], BinaryContent)
-        self.assertEqual(message[1].data, b"image bytes")
+        self.assertEqual(message[1].data, content.getvalue())
+        self.assertEqual(message[1].media_type, "image/png")
+
+    async def test_jpeg_bytes_are_labelled_as_jpeg(self) -> None:
+        factory = AgentsFactory.__new__(AgentsFactory)
+        expected = DataExtractorResponse(data=[])
+        agent = Mock()
+        agent.name = "extractor"
+        agent.run = AsyncMock(return_value=SimpleNamespace(output=expected))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "misleading.png"
+            content = BytesIO()
+            Image.new("RGB", (2, 2)).save(content, format="JPEG")
+            path.write_bytes(content.getvalue())
+            result = await factory.run_agent(agent, expected, "request", image_url=path)
+        self.assertIsNone(result.error_message)
+        self.assertEqual(agent.run.call_args.args[0][1].media_type, "image/jpeg")
 
     async def test_validator_json_tags_and_fix_agent(self) -> None:
         validator = OutputValidator(

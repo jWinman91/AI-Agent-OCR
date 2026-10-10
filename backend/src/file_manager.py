@@ -1,7 +1,6 @@
 from pathlib import Path
-from typing import cast
 
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 from loguru import logger
 
 
@@ -33,6 +32,41 @@ class FileManager:
         self.TEXT_DIR.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
+    def validate_filename(filename: str | None) -> str:
+        if (
+            not filename
+            or filename in {".", ".."}
+            or "/" in filename
+            or "\\" in filename
+            or "\x00" in filename
+            or Path(filename).is_absolute()
+        ):
+            raise HTTPException(status_code=422, detail="Invalid upload filename.")
+        return filename
+
+    @staticmethod
+    def upload_path(directory: Path, filename: str | None) -> Path:
+        path = directory / FileManager.validate_filename(filename)
+        if not path.resolve().is_relative_to(directory.resolve()):
+            raise HTTPException(
+                status_code=422, detail="Upload path escapes its directory."
+            )
+        return path
+
+    @staticmethod
+    def download_path(filename: str, directories: list[Path]) -> Path:
+        path = Path(filename).resolve()
+        if not any(
+            path.is_relative_to(directory.resolve()) for directory in directories
+        ):
+            raise HTTPException(
+                status_code=403, detail="File is outside allowed directories."
+            )
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="File not found.")
+        return path
+
+    @staticmethod
     def _clear_directory(directory: Path) -> None:
         for file_path in directory.iterdir():
             if file_path.is_file():
@@ -62,13 +96,15 @@ class FileManager:
         :return: List of file paths for the uploaded images.
         """
 
+        destinations = [
+            self.upload_path(self.IMAGE_DIR, file.filename) for file in files
+        ]
         # delete * in image dir
         self._clear_directory(self.IMAGE_DIR)
 
         # save images to image dir
         uploaded_urls = []
-        for file in files:
-            file_location = self.IMAGE_DIR / cast(str, file.filename)
+        for file, file_location in zip(files, destinations):
             with file_location.open("wb+") as file_object:
                 file_object.write(file.file.read())
             logger.info(f"Image saved at {file_location}")
@@ -84,13 +120,16 @@ class FileManager:
         :return: List of file paths for the uploaded text files.
         """
 
+        destinations = {
+            filename: self.upload_path(self.TEXT_DIR, filename) for filename in files
+        }
         # delete * in text dir
         self._clear_directory(self.TEXT_DIR)
 
         # save text files to text dir
         uploaded_urls = []
         for filename, content in files.items():
-            file_location = self.TEXT_DIR / filename
+            file_location = destinations[filename]
             with file_location.open("w") as file_object:
                 file_object.write(content)
             logger.info(f"Text file saved at {file_location}")
@@ -105,11 +144,11 @@ class FileManager:
         :param file: The data file to upload.
         :return: The path where the data file is saved.
         """
+        file_location = self.upload_path(self.DATA_DIR, file.filename)
         # delete * in data dir
         self._clear_directory(self.DATA_DIR)
 
         # save data file to data dir
-        file_location = self.DATA_DIR / cast(str, file.filename)
         with file_location.open("wb+") as file_object:
             file_object.write(file.file.read())
         logger.info(f"Data file saved at {file_location}")

@@ -272,6 +272,9 @@ class AgentRunner:
                 ],
             ),
             tool_execution_func=handle_data_download,
+            error_result_factory=lambda message: DataDownloadResult(
+                data_file_path=None, error_message=message
+            ),
         )
 
         return self._error_handling(
@@ -291,6 +294,16 @@ class AgentRunner:
         :param system_prompt_args: Additional arguments for the system prompt.
         :return: The analyser's response containing plot details.
         """
+
+        def failed_result(message: str) -> AnalyserResult:
+            return AnalyserResult(
+                df_file_path=None,
+                data_file_path=None,
+                plot_path=None,
+                code_summary="",
+                python_code="",
+                error_message=message,
+            )
 
         def execute_analyser_code(response: AnalyserResponse) -> AnalyserResult:
             return execute_python_code(
@@ -323,9 +336,10 @@ class AgentRunner:
                 code_summary="str",
             ),
             tool_execution_func=execute_analyser_code,
+            error_result_factory=failed_result,
         )
 
-        if analyser_res.error_message is None:
+        if analyser_res.error_message is None or not analyser_res.python_code:
             return self._error_handling(
                 agent_name="analyser",
                 agent_result=analyser_res,
@@ -352,6 +366,7 @@ class AgentRunner:
                 code_summary="str",
             ),
             tool_execution_func=execute_analyser_code,
+            error_result_factory=failed_result,
         )
         return self._error_handling(
             agent_name="code_repair",

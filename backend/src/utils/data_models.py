@@ -90,6 +90,7 @@ class AnalyserResponse(BaseModel):
 
     python_code: str
     code_summary: str
+    error_message: str | None = None
 
 
 class DataDownloadResponse(BaseModel):
@@ -99,6 +100,7 @@ class DataDownloadResponse(BaseModel):
 
     download_request: list[YFinanceRequest]
     file_name: Path
+    error_message: str | None = None
 
 
 class FixJsonResponse(BaseModel):
