@@ -9,9 +9,14 @@ __pycache__/
 # sqlite db
 *.db
 
+# MLflow local artifact store
+mlruns/
+
 # IDE files
 .vscode/
 .idea/
+.DS_Store
+
 
 # Distribution / packaging
 .Python

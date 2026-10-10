@@ -1,10 +1,10 @@
 from typing import Any, List, Literal
 
 import requests
+from fastapi import UploadFile
 from loguru import logger
 from multipledispatch import dispatch
 from src.backend_client.response_be import BeResponse
-from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 
 class BeRequest:
@@ -147,7 +147,7 @@ class BeRequest:
         self,
         path: str,
         params: dict[str, str],
-        data_files: List[UploadedFile],
+        data_files: List[UploadFile],
     ) -> dict:
         """
         Sends a POST request to the backend with a user prompt and a data file.
@@ -160,12 +160,18 @@ class BeRequest:
         logger.info(
             f"Sending POST request to {self._url}/{path} "
             f"with params {params} and "
-            f"data files {''.join(file.name for file in data_files)}."
+            f"data files {''.join(file.filename for file in data_files)}."
         )
         if not data_files:
             raise ValueError("No data files provided.")
 
-        files = [("files", data_file) for data_file in data_files]
+        # requests needs a plain sync file-like object per part; fastapi's
+        # UploadFile.read() is async, so pass its underlying .file instead of
+        # the UploadFile itself.
+        files = [
+            ("files", (data_file.filename, data_file.file))
+            for data_file in data_files
+        ]
 
         if params:
             response = requests.post(f"{self._url}/{path}", params=params, files=files)
@@ -174,12 +180,12 @@ class BeRequest:
 
         return self.raise_error("POST", BeResponse(response)).json()
 
-    @dispatch(str, dict, UploadedFile)
+    @dispatch(str, dict, UploadFile)
     def post(
         self,
         path: str,
         params: dict[str, str],
-        data_file: UploadedFile,
+        data_file: UploadFile,
     ) -> dict:
         """
         Sends a POST request to the backend with a user prompt and a data file.
@@ -192,10 +198,10 @@ class BeRequest:
         logger.info(
             f"Sending POST request to {self._url}/{path} "
             f"with params {params} and "
-            f"data file {data_file.name}."
+            f"data file {data_file.filename}."
         )
 
-        files = [("file", data_file)]
+        files = [("file", (data_file.filename, data_file.file))]
         if params:
             response = requests.post(f"{self._url}/{path}", params=params, files=files)
         else:

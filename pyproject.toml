@@ -33,7 +33,9 @@ dependencies = [
   "statsmodels",
   "scikit-learn",
   "opencv-python",
-  "sktime"
+  "sktime",
+  "pdf_inspector",
+  "mlflow"
 ]
 
 [project.optional-dependencies]
