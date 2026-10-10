@@ -249,7 +249,9 @@ class AiAgentOcrApp:
             ):
                 raise HTTPException(
                     status_code=422,
-                    detail="Only image files with extensions png, jpg, jpeg are allowed",
+                    detail=(
+                        "Only image files with extensions png, jpg, jpeg are allowed"
+                    ),
                 )
 
             resize_files = []

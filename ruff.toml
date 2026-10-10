@@ -6,3 +6,7 @@ indent-style = "space"
 
 [lint]
 select = ["E", "F", "ANN"]
+
+[lint.per-file-ignores]
+"streamlit-app/src/backend_client/request_be.py" = ["F811"]
+"evaluate_extractor/src/backend_client/request_be.py" = ["F811"]

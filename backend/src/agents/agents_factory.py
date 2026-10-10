@@ -2,14 +2,17 @@ import copy
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, TypeVar, cast, overload
 
 from loguru import logger
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from src.agents.output_validator import OutputValidator
-from src.utils.data_models import AgentResponse, AgentResult, ConfigModelBuild
+from src.utils.data_models import AgentResponse, ConfigModelBuild
+
+ResponseT = TypeVar("ResponseT", bound=AgentResponse)
+ResultT = TypeVar("ResultT")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -95,15 +98,38 @@ class AgentsFactory:
         agent.name = agent_name
         return agent
 
+    @overload
     async def run_agent(
         self,
         agent: Agent,
-        output_type_example: AgentResponse,
+        output_type_example: ResponseT,
         user_prompt: str,
         image_url: str | Path | None = None,
         text_file_url: str | Path | None = None,
-        tool_execution_func: Callable[[AgentResponse], Any] | None = None,
-    ) -> AgentResult:
+        tool_execution_func: None = None,
+    ) -> ResponseT: ...
+
+    @overload
+    async def run_agent(
+        self,
+        agent: Agent,
+        output_type_example: ResponseT,
+        user_prompt: str,
+        image_url: str | Path | None = None,
+        text_file_url: str | Path | None = None,
+        *,
+        tool_execution_func: Callable[[ResponseT], ResultT],
+    ) -> ResultT: ...
+
+    async def run_agent(
+        self,
+        agent: Agent,
+        output_type_example: ResponseT,
+        user_prompt: str,
+        image_url: str | Path | None = None,
+        text_file_url: str | Path | None = None,
+        tool_execution_func: Callable[[ResponseT], ResultT] | None = None,
+    ) -> ResponseT | ResultT:
         """
         Runs an agent with the given user prompt and optional image.
 
@@ -131,9 +157,9 @@ class AgentsFactory:
         if image_url:
             image_path = Path(image_url)
             with image_path.open("rb") as f:
-                file_content = f.read()
+                image_content = f.read()
             binary_content = BinaryContent(
-                data=file_content,
+                data=image_content,
                 media_type="image/png",
             )
             response = await agent.run(
@@ -154,18 +180,25 @@ class AgentsFactory:
 
         if type(response.output) is str:
             try:
-                structured_output = await self.OUTPUT_VALIDATOR.validate_output(
-                    response.output,
-                    agent.name if agent.name else "",
-                    output_type_example,
+                structured_output = cast(
+                    ResponseT,
+                    await self.OUTPUT_VALIDATOR.validate_output(
+                        response.output,
+                        agent.name if agent.name else "",
+                        output_type_example,
+                    ),
                 )
             except Exception as e:
                 logger.error(f"Error validating output for {agent.name}: {e}")
                 structured_output = copy.deepcopy(output_type_example)
-                structured_output.error_message = f"Error validating output: {str(e)}"
+                setattr(
+                    structured_output,
+                    "error_message",
+                    f"Error validating output: {str(e)}",
+                )
                 return structured_output
         else:
-            structured_output = response.output
+            structured_output = cast(ResponseT, response.output)
 
         # execute tools if tool execution function is given
         # NOTE: the tool execution function will always return a result,

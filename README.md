@@ -32,6 +32,25 @@ Notes:
 - This project targets Python 3.11 (see `mypy.ini`).
 - Dependencies are declared in `pyproject.toml`; `requirements.txt` remains for reference.
 
+## Pre-commit checks
+
+Install the development tools and Git hooks once per clone:
+
+```bash
+uv sync --extra dev
+uv run --extra dev pre-commit install
+```
+
+Commits check staged Python files with Ruff. Changes to backend Python code or
+typing configuration also run strict mypy checks on all of `backend/src`.
+The hooks require `uv` on your PATH and do not automatically modify files.
+
+Run both checks across the repository manually:
+
+```bash
+uv run --extra dev pre-commit run --all-files
+```
+
 ## Frontend verification
 
 Run the frontend regression tests (mocked HTTP and Streamlit AppTest; no models required):

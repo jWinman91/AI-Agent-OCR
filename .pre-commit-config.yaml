@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: Ruff
+        entry: uv run --extra dev ruff check
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy (backend)
+        entry: uv run --extra dev mypy backend/src --config-file mypy.ini
+        language: system
+        pass_filenames: false
+        files: ^(backend/.*\.py|mypy\.ini|pyproject\.toml|uv\.lock)$

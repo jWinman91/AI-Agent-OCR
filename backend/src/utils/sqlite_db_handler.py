@@ -1,7 +1,7 @@
 import json
 import sqlite3
 import uuid
-from typing import Any, List, Union
+from typing import Any, List
 
 from loguru import logger
 from src.utils.db_handler import DBHandler
@@ -57,8 +57,10 @@ class SqliteDBHandler(DBHandler):
                 ]
             )
             # create config table
-            query = f"""CREATE TABLE IF NOT EXISTS {self._table_name} (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                                                       {columns});"""
+            query = (
+                f"CREATE TABLE IF NOT EXISTS {self._table_name} "
+                f"(id INTEGER PRIMARY KEY AUTOINCREMENT, {columns});"
+            )
             cursor.execute(query)
             con.commit()
         except sqlite3.OperationalError as e:
@@ -112,7 +114,10 @@ class SqliteDBHandler(DBHandler):
         con = self.connect()
         cursor = con.cursor()
         uid = str(uuid.uuid4())  # create standard conform uuid4
-        query = f"""INSERT INTO {self._table_name} ({",".join(list(self._db_schema.keys()))}) VALUES (?, ?);"""
+        query = (
+            f"INSERT INTO {self._table_name} "
+            f"({','.join(list(self._db_schema.keys()))}) VALUES (?, ?);"
+        )
         config_dict["uuid"] = uid
         try:
             cursor.execute(

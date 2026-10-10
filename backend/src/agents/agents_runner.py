@@ -1,14 +1,13 @@
 import datetime
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Literal
+from typing import Any, Awaitable, Callable, Dict, List, Literal, TypeVar, cast
 
 import pandas as pd
 from loguru import logger
 from PIL import Image
 from src.agents.agents_factory import AgentsFactory
 from src.server.download_server import (
-    YFinanceRequest,
     handle_data_download,
 )
 from src.server.plot_server import execute_python_code, get_dataset_metadata
@@ -18,13 +17,16 @@ from src.utils.data_models import (
     AnalyserResult,
     ConfigModelBuild,
     DataDownloadResponse,
+    DataDownloadResult,
     DataExtractorPrompt,
     DataExtractorResponse,
     DataExtractorResult,
     OrchestratorResponse,
+    YFinanceRequest,
 )
 
 logging.basicConfig(level=logging.INFO)
+ResultT = TypeVar("ResultT", bound=AgentResult)
 
 
 class AgentRunner:
@@ -59,11 +61,17 @@ class AgentRunner:
 
     @staticmethod
     def _error_handling(
-        agent_name: Literal["data_extractor", "orchestrator", "analyser"],
-        agent_result: AgentResult,
-    ) -> AgentResult:
+        agent_name: Literal[
+            "data_extractor",
+            "orchestrator",
+            "analyser",
+            "data_downloader",
+            "code_repair",
+        ],
+        agent_result: ResultT,
+    ) -> ResultT:
         """
-        Adds the agent name to the error message in the agent result if an error occurred.
+        Adds the agent name to the error message if an error occurred.
 
         param agent_name: Name of the agent
         param agent_result: The result object of the agent containing error information
@@ -85,7 +93,7 @@ class AgentRunner:
                  if not available
         """
         if image_url.suffix.lower() != ".pdf" and image_url.suffix.lower() != ".md":
-            exif = Image.open(image_url)._getexif()
+            exif = cast(Any, Image.open(image_url))._getexif()
             if exif is not None and 36867 in list(exif.keys()):
                 return datetime.datetime.strptime(exif[36867], "%Y:%m:%d %H:%M:%S")
 
@@ -234,7 +242,7 @@ class AgentRunner:
         self,
         data_download_prompt: str,
         system_prompt_args: dict[str, str],
-    ) -> DataDownloadResponse:
+    ) -> DataDownloadResult:
         """
         Runs the data downloader agent based on the provided prompt.
 
@@ -252,7 +260,7 @@ class AgentRunner:
             agent=data_downloader,
             user_prompt=data_download_prompt,
             output_type_example=DataDownloadResponse(
-                file_name="str",
+                file_name=Path(""),
                 download_request=[
                     YFinanceRequest(
                         share_name="E.ON",
@@ -274,7 +282,7 @@ class AgentRunner:
     async def run_analyser(
         self,
         analyser_prompt: str,
-        system_prompt_args: dict[str, str],
+        system_prompt_args: dict[str, Any],
     ) -> AnalyserResult:
         """
         Runs the analyser agent to generate plots based on extracted data.
@@ -375,13 +383,13 @@ class AgentRunner:
         :return: The final result containing plot and data details.
         """
         # Initialize agent results and functions and parameters for each agent
-        agent_res = {
+        agent_res: dict[str, AgentResult | None] = {
             "orchestrator": None,
             "data_extractor": None,
             "data_downloader": None,
             "analyser": None,
         }
-        agent_funcs = {
+        agent_funcs: dict[str, Callable[..., Awaitable[AgentResult]]] = {
             "orchestrator": self.run_orchestrator,
             "data_extractor": self.run_data_extractor,
             "data_downloader": self.run_downloader,
@@ -463,29 +471,33 @@ class AgentRunner:
                 raise ValueError(f"Unknown agent name: {agent_name}")
 
             logger.info(f"Running {agent_name} agent...")
-            agent_res[agent_name] = await agent_funcs[agent_name](
+            current_result = await agent_funcs[agent_name](
                 **agent_params(agent_res)[agent_name]
             )
+            agent_res[agent_name] = current_result
 
-            if agent_res[agent_name].error_message:
-                logger.error(agent_res[agent_name].error_message)
-                return agent_res[agent_name]
+            if current_result.error_message:
+                logger.error(current_result.error_message)
+                return current_result
 
             if (
                 agent_name == "orchestrator"
                 and agent_res["orchestrator"]
-                and agent_res["orchestrator"].data_download_prompt
+                and cast(
+                    OrchestratorResponse, agent_res["orchestrator"]
+                ).data_download_prompt
             ):
                 # Run the data downloader agent
                 # if orchestrator provides a data download prompt
                 logger.info("Running data_downloader agent...")
-                agent_res["data_downloader"] = await self.run_downloader(
+                downloader_result = await self.run_downloader(
                     **agent_params(agent_res)["data_downloader"]
                 )
+                agent_res["data_downloader"] = downloader_result
 
-                if agent_res["data_downloader"].error_message:
-                    logger.error(agent_res["data_downloader"].error_message)
-                    return agent_res["data_downloader"]
+                if downloader_result.error_message:
+                    logger.error(downloader_result.error_message)
+                    return downloader_result
 
         # return the result of the last agent in the list of agents to run
         return agent_res[list_of_agents_to_run[-1]]

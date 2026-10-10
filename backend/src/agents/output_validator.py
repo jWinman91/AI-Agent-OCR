@@ -1,7 +1,7 @@
 import json
 import re
 from collections.abc import Callable
-from typing import Any, Awaitable
+from typing import Any, Awaitable, cast
 
 from loguru import logger
 from pydantic import ValidationError
@@ -9,6 +9,7 @@ from pydantic_ai import Agent
 from src.utils.data_models import (
     AgentResponse,
     AnalyserResponse,
+    ConfigModelBuild,
     DataDownloadResponse,
     DataExtractorResponse,
     FixJsonResponse,
@@ -27,8 +28,8 @@ class OutputValidator:
     def __init__(
         self,
         create_agent_func: Callable[..., Agent],
-        run_agent_func: Callable[..., Awaitable[AgentResponse]],
-        config: dict[str, Any],
+        run_agent_func: Callable[..., Awaitable[AgentResponse | str]],
+        config: ConfigModelBuild,
     ) -> None:
         """
         Initializes the OutputValidator class.
@@ -57,7 +58,7 @@ class OutputValidator:
         :return: A dictionary representing the parsed JSON.
         """
         try:
-            return json.loads(text)
+            return cast(dict[str, Any], json.loads(text))
         except json.JSONDecodeError as e:
             logger.error(
                 f"Initial JSON parsing failed: {e},"
@@ -99,8 +100,9 @@ class OutputValidator:
                         ),
                     )
                 )
+            fixed_json = cast(FixJsonResponse, fixed_json)
             if not fixed_json.error_message:
-                return json.loads(fixed_json.fixed_json)
+                return cast(dict[str, Any], json.loads(fixed_json.fixed_json))
             else:
                 logger.error(
                     f"Error in parsing JSON. "
@@ -141,7 +143,7 @@ class OutputValidator:
         agent_response: str,
         agent_name: str,
         expected_json: AgentResponse | str,
-    ) -> AgentResponse:
+    ) -> AgentResponse | str:
         """
         Validates the output of an agent against the expected Pydantic model.
 
@@ -153,12 +155,13 @@ class OutputValidator:
         # Special handling for AnalyserResponse which contains code
         if type(expected_json) is AnalyserResponse:
             return AnalyserResponse(
-                python_code=self.extract_tag("CODE", agent_response),
-                code_summary=self.extract_tag("SUMMARY", agent_response),
+                python_code=cast(str, self.extract_tag("CODE", agent_response)),
+                code_summary=cast(str, self.extract_tag("SUMMARY", agent_response)),
             )
         if type(expected_json) is str:
             return agent_response
 
+        expected_json = cast(AgentResponse, expected_json)
         parsed_output = await self.parse_json(
             text=agent_response,
             expected_json=expected_json,
@@ -185,6 +188,7 @@ class OutputValidator:
                     }
                 ),
             )
+            fixed_json = cast(FixJsonResponse, fixed_json)
             if not fixed_json.error_message:
                 return self.try_output_models(json.loads(fixed_json.fixed_json))
             else:
@@ -200,7 +204,7 @@ class OutputValidator:
         """
         Attempts to parse the output using different models in order of preference.
         """
-        models = [
+        models: list[type[AgentResponse]] = [
             DataExtractorResponse,
             OrchestratorResponse,
             FixJsonResponse,

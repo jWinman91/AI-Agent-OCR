@@ -1,5 +1,6 @@
 import traceback
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 from src.utils.data_models import AnalyserResponse, AnalyserResult
@@ -27,7 +28,7 @@ def execute_python_code(
     df_download = (
         pd.read_csv(downloaded_data_file_path) if downloaded_data_file_path else None
     )
-    context = {
+    context: dict[str, Any] = {
         "df": df,
         "df_download": df_download,
         "plot_path": "",
@@ -37,14 +38,14 @@ def execute_python_code(
     try:
         exec(analyser_response.python_code, context)
         return AnalyserResult(
-            df_file_path=context["df_file_path"],
+            df_file_path=cast(Path | None, context["df_file_path"]),
             data_file_path=data_file_path or downloaded_data_file_path,
-            plot_path=context["plot_path"],
+            plot_path=cast(Path | None, context["plot_path"]),
             code_summary=analyser_response.code_summary,
             python_code=analyser_response.python_code,
             error_message=None,
         )
-    except Exception as e:
+    except Exception:
         return AnalyserResult(
             df_file_path=None,
             data_file_path=None,

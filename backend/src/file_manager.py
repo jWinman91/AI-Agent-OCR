@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 from fastapi import UploadFile
 from loguru import logger
@@ -67,7 +68,7 @@ class FileManager:
         # save images to image dir
         uploaded_urls = []
         for file in files:
-            file_location = self.IMAGE_DIR / file.filename
+            file_location = self.IMAGE_DIR / cast(str, file.filename)
             with file_location.open("wb+") as file_object:
                 file_object.write(file.file.read())
             logger.info(f"Image saved at {file_location}")
@@ -108,7 +109,7 @@ class FileManager:
         self._clear_directory(self.DATA_DIR)
 
         # save data file to data dir
-        file_location = self.DATA_DIR / file.filename
+        file_location = self.DATA_DIR / cast(str, file.filename)
         with file_location.open("wb+") as file_object:
             file_object.write(file.file.read())
         logger.info(f"Data file saved at {file_location}")

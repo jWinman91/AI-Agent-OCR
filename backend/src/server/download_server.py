@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import yfinance as yf
@@ -17,7 +18,7 @@ def resolve_ticker(symbol: str) -> str:
     s = yf.Search(symbol)
     if not s.quotes:
         raise ValueError(f"No ticker found for symbol: {symbol}")
-    return s.quotes[0]["symbol"]
+    return cast(str, s.quotes[0]["symbol"])
 
 
 def download_yfinance(reqs: list[YFinanceRequest], file_name: Path) -> Path:
@@ -119,6 +120,6 @@ def handle_data_download(download_response: DataDownloadResponse) -> DataDownloa
         return DataDownloadResult(
             data_file_path=None,
             error_message=(
-                "Invalid request format. Expected a list of YFinanceRequest objects.",
+                "Invalid request format. Expected a list of YFinanceRequest objects."
             ),
         )

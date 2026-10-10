@@ -48,7 +48,8 @@ class Preprocessor:
 
     def apply_clahe(self, image: UploadFile) -> UploadFile:
         """
-        Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to enhance the image.
+        Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        to enhance the image.
 
         :param image: UploadFile object representing the image
         :return: enhanced image as UploadFile
