@@ -106,11 +106,13 @@ def get_dataset_metadata(data_file_path: Path | None) -> str:
         stats = df[numeric_cols].describe()
         info_lines.append(stats.to_string())
 
-    # Include head and optionally tail
+    # Include head, tail, and some random samples of the dataset
     info_lines.append("SAMPLE DATA:\n\n")
-    info_lines.append("\nFirst rows:")
-    info_lines.append(df.head().to_string(index=False))
-    info_lines.append("\nLast rows:")
-    info_lines.append(df.tail().to_string(index=False))
+    info_lines.append("\nFirst 50 rows:")
+    info_lines.append(df.head(50).to_string(index=False))
+    info_lines.append("\nLast 50 rows:")
+    info_lines.append(df.tail(50).to_string(index=False))
+    info_lines.append("\nRandom 50 rows:")
+    info_lines.append(df.sample(50).to_string(index=False))
 
     return "\n".join(info_lines)
