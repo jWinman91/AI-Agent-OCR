@@ -114,8 +114,6 @@ data_extractor:
 analyser:
   model: "gemma4:latest"
   model_provider: "ollama"
-  temperature: 0.01
-  top_p: 1
   system_prompt_user: |
     **ANALYSIS TASK**
       - If the user prompt requests data analysis, perform the necessary computations
@@ -263,8 +261,6 @@ analyser:
 code_repair:
   model: "gemma4:latest"
   model_provider: "ollama"
-  temperature: 0.01
-  top_p: 1
   system_prompt_user: |
     Preserve the original analysis request, labels, units, and requested outputs.
     Fix the cause of the execution error with the smallest necessary changes.
