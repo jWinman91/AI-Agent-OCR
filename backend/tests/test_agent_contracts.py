@@ -32,6 +32,62 @@ from src.utils.sqlite_db_handler import SqliteDBHandler  # noqa: E402
 
 
 class AgentContracts(unittest.IsolatedAsyncioTestCase):
+    def test_create_agent_passes_ollama_config_and_structured_output(self) -> None:
+        factory = AgentsFactory.__new__(AgentsFactory)
+        factory.AGENT_NAMES = ["analyser"]
+        config = ConfigModelBuild(
+            model="gemma4:latest",
+            model_provider="ollama",
+            base_url="http://localhost:11434/v1",
+            output_type=True,
+            system_prompt="Analyse {dataset}",
+        )
+        model = Mock()
+        provider = Mock()
+        agent = Mock()
+
+        with (
+            patch("src.agents.agents_factory.OllamaProvider", return_value=provider),
+            patch("src.agents.agents_factory.OpenAIChatModel", return_value=model),
+            patch("src.agents.agents_factory.Agent", return_value=agent) as agent_ctor,
+        ):
+            result = factory.create_agent(
+                "analyser",
+                config,
+                AnalyserResponse,
+                system_prompt_args={"dataset": "transactions"},
+            )
+
+        self.assertIs(result, agent)
+        self.assertEqual(agent.name, "analyser")
+        agent_ctor.assert_called_once_with(
+            model=model,
+            system_prompt="Analyse transactions",
+            output_type=AnalyserResponse,
+        )
+
+    def test_create_agent_uses_named_provider_without_optional_output_type(self) -> None:
+        factory = AgentsFactory.__new__(AgentsFactory)
+        factory.AGENT_NAMES = ["analyser"]
+        config = ConfigModelBuild(
+            model="model-name",
+            model_provider="openai",
+            output_type=False,
+            system_prompt="Analyse the data",
+        )
+        agent = Mock()
+
+        with patch(
+            "src.agents.agents_factory.Agent", return_value=agent
+        ) as agent_ctor:
+            result = factory.create_agent("analyser", config, AnalyserResponse)
+
+        self.assertIs(result, agent)
+        agent_ctor.assert_called_once_with(
+            model="openai:model-name",
+            system_prompt="Analyse the data",
+        )
+
     async def test_malformed_downloader_does_not_execute(self) -> None:
         factory = AgentsFactory.__new__(AgentsFactory)
         repair = AsyncMock(return_value=FixJsonResponse(fixed_json='{"data": []}'))

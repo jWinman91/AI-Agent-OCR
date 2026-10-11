@@ -79,29 +79,25 @@ class AgentsFactory:
                 f"Invalid agent {agent_name}. Agent must be one of {self.AGENT_NAMES}"
             )
 
-        cfg = config.model_dump()
-        cfg["system_prompt"] = self._fill_system_prompt(
+        agent_config = config.model_dump(
+            exclude={"model", "model_provider", "base_url", "output_type"}
+        )
+        agent_config["system_prompt"] = self._fill_system_prompt(
             config.system_prompt, system_prompt_args
         )
 
-        # set base url if given in config and delete it from cfg
-        base_url = cfg.pop("base_url", "http://localhost:11434/v1")
+        if config.output_type:
+            agent_config["output_type"] = output_type
 
-        # set output type if given in config
-        if cfg.pop("output_type", False):
-            cfg["output_type"] = output_type
-
-        # initiate model with model provider if ollama should be used
-        model_provider = cfg.pop("model_provider", "openai")
-        if model_provider == "ollama":
-            cfg["model"] = OpenAIChatModel(
-                model_name=cfg["model"],
-                provider=OllamaProvider(base_url=base_url),
+        if config.model_provider == "ollama":
+            agent_config["model"] = OpenAIChatModel(
+                model_name=config.model,
+                provider=OllamaProvider(base_url=config.base_url),
             )
         else:
-            cfg["model"] = f"{model_provider}:{cfg['model']}"
+            agent_config["model"] = f"{config.model_provider}:{config.model}"
 
-        agent = Agent(**cfg, model_settings={"temperature": 0.0, "top_p": 1.0})
+        agent = Agent(**agent_config)
         agent.name = agent_name
         return agent
 
