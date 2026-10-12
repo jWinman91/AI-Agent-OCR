@@ -40,6 +40,7 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
             model_provider="ollama",
             base_url="http://localhost:11434/v1",
             output_type=True,
+            model_settings={"temperature": 0.2, "top_p": 0.9},
             system_prompt="Analyse {dataset}",
         )
         model = Mock()
@@ -63,10 +64,13 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         agent_ctor.assert_called_once_with(
             model=model,
             system_prompt="Analyse transactions",
+            model_settings={"temperature": 0.2, "top_p": 0.9},
             output_type=AnalyserResponse,
         )
 
-    def test_create_agent_uses_named_provider_without_optional_output_type(self) -> None:
+    def test_create_agent_uses_named_provider_without_optional_output_type(
+        self,
+    ) -> None:
         factory = AgentsFactory.__new__(AgentsFactory)
         factory.AGENT_NAMES = ["analyser"]
         config = ConfigModelBuild(
@@ -77,9 +81,7 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         )
         agent = Mock()
 
-        with patch(
-            "src.agents.agents_factory.Agent", return_value=agent
-        ) as agent_ctor:
+        with patch("src.agents.agents_factory.Agent", return_value=agent) as agent_ctor:
             result = factory.create_agent("analyser", config, AnalyserResponse)
 
         self.assertIs(result, agent)

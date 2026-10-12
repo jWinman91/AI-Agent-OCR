@@ -80,11 +80,20 @@ class AgentsFactory:
             )
 
         agent_config = config.model_dump(
-            exclude={"model", "model_provider", "base_url", "output_type"}
+            exclude={
+                "model",
+                "model_provider",
+                "base_url",
+                "output_type",
+                "model_settings",
+            }
         )
         agent_config["system_prompt"] = self._fill_system_prompt(
             config.system_prompt, system_prompt_args
         )
+
+        if config.model_settings:
+            agent_config["model_settings"] = config.model_settings
 
         if config.output_type:
             agent_config["output_type"] = output_type
