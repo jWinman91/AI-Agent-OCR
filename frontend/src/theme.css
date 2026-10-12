@@ -1,0 +1,24 @@
+:root {
+  --font-body: 'Public Sans Variable', sans-serif;
+  --background: #f5f6f7;
+  --surface: #ffffff;
+  --text: #252a30;
+  --muted: #69727d;
+  --border: #e1e5e9;
+  --border-strong: #cbd1d7;
+  --primary: #126c67;
+  --primary-hover: #0e5652;
+  --primary-soft: #e7f2f0;
+  --danger: #a3303c;
+  --danger-soft: #fff1f2;
+  --success: #25704a;
+  --success-soft: #edf6f0;
+  --warning: #805b17;
+  --warning-soft: #fff8e8;
+  --table-alternate: #fafbfc;
+  --radius: 5px;
+  --content-padding: 38px;
+  --section-gap: 38px;
+  --heading-size: 34px;
+  --section-heading-size: 16px;
+}
