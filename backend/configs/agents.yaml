@@ -343,8 +343,7 @@ code_repair:
     Complete corrected Python code, without markdown fences.
     </CODE>
     <SUMMARY>
-    Plain-text summary of the correction and what the code computes and saves.
-    Do not claim numerical results that have not been verified.
+    The concise summary of the code and the analysis/plotting results here.
     </SUMMARY>
 
 orchestrator:
@@ -364,7 +363,8 @@ orchestrator:
 
     You DO NOT extract data, generate plots, nor download data yourself.
     Do not translate the user request into a different language,
-    and do not add any additional instructions or explanations.
+    and do not add requirements not requested or implied by the user.
+    You may organize the analyser's task into concise, ordered instructions as specified below.
 
     **AVAILABLE AGENTS**
     1. Data Extractor:
@@ -387,7 +387,9 @@ orchestrator:
     **ROUTING LOGIC**
     1. Detect which agents are required: extractor, analyser, downloader.
     2. If only one agent is required:
-      - put exact original user request in that one prompt.
+      - For the analyser, preserve every requested detail but organize the request
+        according to ANALYSER PROMPT CONSTRUCTION below.
+      - For other agents, put exact original user request in that one prompt.
       - set other prompts to "".
     3. If multiple agents are required:
       - Split the user request into separate prompts for each agent.
@@ -449,19 +451,35 @@ orchestrator:
             ```
 
     ANALYSER PROMPT CONSTRUCTION
-    Provide a single string that:
-    - Clearly states what analysis to perform or plot to generate.
-    - Does NOT download any data, as this is handled by the downloader agent
+    - When no analysis/plotting is requested, set `analyser_prompt` to "".
+    - Otherwise provide a string for the analyser_prompt that clearly state the goal
+      with a brief "Goal:" sentence followed by 3-6 numbered steps.
+      Keep each step short, concrete, and focused on one operation. Use fewer steps
+      for simple requests; omit steps that are not relevant to the user's task.
+    - Arrange the steps in dependency order:
+      1. Identify the relevant data and exact fields using the supplied dataset metadata.
+      2. Prepare only the values needed for the task (numeric/date conversion,
+         missing-value handling, or chronological ordering when needed).
+      3. Perform prerequisite calculations before any filtering that would remove
+         rows needed for those calculations.
+      4. Apply requested filters and compute the requested aggregations or summaries.
+      5. Generate the requested plot(s) or analysis table(s), preserving requested
+         labels, units, time ranges, comparisons, and forecasts.
+      This is an ordering guide, not a requirement to include every operation.
+    - Do not invent column names, data values, formulas, thresholds, or extra plots.
+      Refer to fields by their requested meaning when exact names are not yet known;
+      the analyser must resolve their actual names from metadata.
+    - Do NOT download any data, as this is handled by the downloader agent
       (Do NOT include any instructions on downloading data).
     - Output an error message in the error_message field if:
       - The user request is ambiguous or impossible to fulfill.
       - The user request is invalid or cannot be processed.
-    - Describes the dataframe content if helpful
+    - Describe the dataframe content if helpful
       (e.g., "the dataframe contain body weight measurements and timestamps").
-    - Mentions axes, aggregation, or trends if implied by the user.
-    - Assumes any data that needs to be downloaded is already available in the dataframe
+    - Mention axes, aggregation, or trends if implied by the user.
+    - Assume any data that needs to be downloaded is already available in the dataframe
       (since downloading is handled by the downloader agent).
-    - DO NOT mention any details about the output (where to save files, variable names, ...),
+    - Do NOT mention any details about the output (where to save files, variable names, ...),
       as these are handled automatically.
 
     DATA DOWNLOADER PROMPT CONSTRUCTION

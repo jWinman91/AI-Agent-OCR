@@ -356,6 +356,7 @@ class AgentRunner:
             f"Original analysis request:\n{analyser_prompt}\n\n"
             f"Failed Python code:\n<CODE>\n"
             f"{analyser_res.python_code}\n</CODE>\n\n"
+            f"and the summary of the code:\n{analyser_res.code_summary}\n\n"
             f"Execution traceback:\n{analyser_res.error_message}"
         )
         analyser_res = await self.agents.run_agent(
