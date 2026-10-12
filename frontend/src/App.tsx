@@ -28,7 +28,7 @@ import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import type { AgentConfig, AgentName, ResultView, Workflow } from './api'
-import { AgentFailure, api, loadResult, message, OPENAI_MODELS } from './api'
+import { AgentFailure, api, loadResult, message } from './api'
 import './App.css'
 
 type RunState = {
@@ -687,30 +687,40 @@ function WorkflowView({ workflow }: { workflow: Workflow }) {
 function AgentForm({ agent }: { agent: AgentName }) {
     const { busy, ready, operation } = useWorkspace()
     const config = useQuery({ queryKey: ['config', agent], queryFn: () => api.config(agent) })
-    const models = useQuery({ queryKey: ['ollama-models'], queryFn: api.models })
+    const providers = useQuery({ queryKey: ['model-providers'], queryFn: api.providers })
     const [edits, setDraft] = useState<AgentConfig>()
     const draft = edits || config.data
+    const models = useQuery({
+        queryKey: ['models', draft?.model_provider],
+        queryFn: () => api.models(draft?.model_provider || ''),
+        enabled: Boolean(draft),
+    })
     const [key, setKey] = useState('')
     const [notice, setNotice] = useState('')
     const [error, setError] = useState('')
-    if (config.isPending)
+    if (config.isPending || providers.isPending)
         return (
             <section className="config-section">
                 <LoaderCircle className="spin" size={18} /> Loading configuration
             </section>
         )
-    if (config.error || !draft)
+    if (config.error || providers.error || !draft)
         return (
             <section className="config-section">
-                <Notice>{message(config.error)}</Notice>
-                <button className="button secondary" onClick={() => void config.refetch()}>
+                <Notice>{message(config.error || providers.error)}</Notice>
+                <button className="button secondary" onClick={() => {
+                    void config.refetch()
+                    void providers.refetch()
+                }}>
                     <RefreshCw size={16} />
                     Retry
                 </button>
             </section>
         )
-    const available = draft.model_provider === 'openai' ? OPENAI_MODELS : models.data || []
-    const missing = !available.includes(draft.model)
+    const available = models.error ? [] : models.data || []
+    const selectedModel = draft.model || available[0] || ''
+    const missing = !available.includes(selectedModel)
+    const providerMissing = !providers.data?.includes(draft.model_provider)
     const change = (patch: Partial<AgentConfig>) => {
         setDraft({ ...draft, ...patch })
         setNotice('')
@@ -722,7 +732,7 @@ function AgentForm({ agent }: { agent: AgentName }) {
             setNotice('')
             try {
                 if (draft.model_provider === 'openai' && key) await api.setKey(key)
-                await api.save(agent, draft)
+                await api.save(agent, { ...draft, model: selectedModel })
                 await config.refetch()
                 setNotice('Configuration saved.')
             } catch (failure) {
@@ -766,22 +776,26 @@ function AgentForm({ agent }: { agent: AgentName }) {
                         value={draft.model_provider}
                         disabled={disabled}
                         onChange={(event) => {
-                            const provider = event.target.value as AgentConfig['model_provider']
-                            const catalog = provider === 'openai' ? OPENAI_MODELS : models.data || []
                             change({
-                                model_provider: provider,
-                                model: catalog.includes(draft.model) ? draft.model : catalog[0] || '',
+                                model_provider: event.target.value,
+                                model: '',
                             })
                         }}
                     >
-                        <option value="ollama">Ollama</option>
-                        <option value="openai">OpenAI</option>
+                        {providerMissing && <option value={draft.model_provider} disabled>
+                            {draft.model_provider} (unavailable)
+                        </option>}
+                        {providers.data?.map((provider) => (
+                            <option key={provider} value={provider}>
+                                {provider === 'openai' ? 'OpenAI' : provider === 'ollama' ? 'Ollama' : provider}
+                            </option>
+                        ))}
                     </select>
                 </label>
                 <label className="field">
                     Model
                     <select
-                        value={missing ? '' : draft.model}
+                        value={missing ? '' : selectedModel}
                         disabled={disabled || !available.length}
                         onChange={(event) => change({ model: event.target.value })}
                     >
@@ -796,30 +810,30 @@ function AgentForm({ agent }: { agent: AgentName }) {
                     </select>
                 </label>
             </div>
-            {draft.model_provider === 'ollama' && (
-                <div className="model-status">
-                    {models.error ? (
-                        <Notice>{message(models.error)}</Notice>
-                    ) : !models.isPending && !available.length ? (
-                        <Notice tone="warning">No installed Ollama models.</Notice>
-                    ) : (
-                        missing && (
-                            <Notice tone="warning">
-                                The configured model is unavailable. Select a replacement.
-                            </Notice>
-                        )
-                    )}
-                    <button
-                        className="icon-button"
-                        title="Refresh Ollama models"
-                        aria-label="Refresh Ollama models"
-                        disabled={models.isFetching || disabled}
-                        onClick={() => void models.refetch()}
-                    >
-                        <RefreshCw size={16} className={models.isFetching ? 'spin' : ''} />
-                    </button>
-                </div>
-            )}
+            <div className="model-status">
+                {models.error ? (
+                    <Notice>{message(models.error)}</Notice>
+                ) : models.isPending ? (
+                    <span><LoaderCircle className="spin" size={16} /> Loading models</span>
+                ) : !models.isPending && !available.length ? (
+                    <Notice tone="warning">No models available for {draft.model_provider}.</Notice>
+                ) : (
+                    missing && (
+                        <Notice tone="warning">
+                            The configured model is unavailable. Select a replacement.
+                        </Notice>
+                    )
+                )}
+                <button
+                    className="icon-button"
+                    title="Refresh models"
+                    aria-label="Refresh models"
+                    disabled={models.isFetching || disabled}
+                    onClick={() => void models.refetch()}
+                >
+                    <RefreshCw size={16} className={models.isFetching ? 'spin' : ''} />
+                </button>
+            </div>
             {draft.model_provider === 'openai' && (
                 <label className="field">
                     OpenAI API key
@@ -851,7 +865,7 @@ function AgentForm({ agent }: { agent: AgentName }) {
             <div className="form-actions">
                 <button
                     className="button primary"
-                    disabled={disabled || missing}
+                    disabled={disabled || missing || providerMissing}
                     onClick={() => void save()}
                 >
                     <Check size={16} />

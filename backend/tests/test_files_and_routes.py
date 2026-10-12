@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import AiAgentOcrApp  # noqa: E402
 from src.file_manager import FileManager  # noqa: E402
+from src.model_retriever import ModelRetriever  # noqa: E402
 from src.preprocessor import Preprocessor  # noqa: E402
 
 
@@ -30,6 +31,7 @@ class FileRoutes(unittest.TestCase):
         )
         self.server = AiAgentOcrApp.__new__(AiAgentOcrApp)
         self.server.FILE_MANAGER = self.manager
+        self.server.MODEL_RETRIEVER = ModelRetriever()
         self.server.PREPROCESSOR = Preprocessor()
         self.server._image_urls = []
         self.server._text_file_urls = []
@@ -37,6 +39,69 @@ class FileRoutes(unittest.TestCase):
         self.server.app = FastAPI()
         self.server._register_routes()
         self.client = TestClient(self.server.app)
+
+    def test_model_catalog_routes(self) -> None:
+        self.assertEqual(
+            self.client.get("/get_model_providers/").json(), ["openai", "ollama"]
+        )
+        response = self.client.get("/get_models/", params={"model_provider": "openai"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("gpt-5", response.json())
+        self.assertEqual(
+            self.client.get(
+                "/get_models/", params={"model_provider": "missing"}
+            ).status_code,
+            404,
+        )
+
+    def test_model_retriever_takes_precedence_and_reports_failure(self) -> None:
+        provider = self.server.MODEL_RETRIEVER.providers["ollama"]
+        provider.available_models = ["static-model"]
+        retriever = MagicMock(return_value=["local-model"])
+        with patch.object(self.server.MODEL_RETRIEVER, "get_ollama_models", retriever):
+            response = self.client.get(
+                "/get_models/", params={"model_provider": "ollama"}
+            )
+            self.assertEqual(response.json(), ["local-model"])
+            retriever.assert_called_once_with()
+            retriever.side_effect = RuntimeError("Ollama is unavailable")
+            response = self.client.get(
+                "/get_models/", params={"model_provider": "ollama"}
+            )
+            self.assertEqual(response.status_code, 502)
+            self.assertEqual(response.json()["detail"], "Ollama is unavailable")
+        provider.retriever_function = "missing_retriever"
+        self.assertEqual(
+            self.client.get(
+                "/get_models/", params={"model_provider": "ollama"}
+            ).status_code,
+            502,
+        )
+
+    def test_model_catalog_supports_new_static_provider(self) -> None:
+        config = self.root / "models.yaml"
+        config.write_text(
+            "model_provider:\n  custom:\n    available_models: [custom-model]\n"
+        )
+        self.server.MODEL_RETRIEVER = ModelRetriever(config)
+        self.assertEqual(self.client.get("/get_model_providers/").json(), ["custom"])
+        self.assertEqual(
+            self.client.get("/get_models/", params={"model_provider": "custom"}).json(),
+            ["custom-model"],
+        )
+
+    def test_ollama_retriever_uses_backend_url_and_validates_response(self) -> None:
+        response = MagicMock()
+        response.json.return_value = {"models": [{"name": "local-model"}]}
+        with (
+            patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://ollama:11434/"}),
+            patch("src.model_retriever.requests.get", return_value=response) as get,
+        ):
+            self.assertEqual(ModelRetriever.get_ollama_models(), ["local-model"])
+            get.assert_called_once_with("http://ollama:11434/api/tags", timeout=(3, 10))
+            response.json.return_value = {"models": [{"name": ""}]}
+            with self.assertRaisesRegex(RuntimeError, "invalid model list"):
+                ModelRetriever.get_ollama_models()
 
     def test_upload_paths_rejected_before_cleanup(self) -> None:
         previous = self.manager.IMAGE_DIR / "previous.png"

@@ -3,6 +3,24 @@ import { api, loadResult, outputPath } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 describe('backend contracts', () => {
+    it('discovers providers and models through the backend', async () => {
+        const fetch = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify(['custom'])))
+            .mockResolvedValueOnce(new Response(JSON.stringify(['custom-model'])))
+        vi.stubGlobal('fetch', fetch)
+        expect(await api.providers()).toEqual(['custom'])
+        expect(await api.models('custom provider')).toEqual(['custom-model'])
+        expect(fetch.mock.calls[0][0]).toBe('/api/get_model_providers/')
+        expect(fetch.mock.calls[1][0]).toBe('/api/get_models/?model_provider=custom%20provider')
+    })
+    it('rejects malformed catalogs and surfaces discovery outages', async () => {
+        const fetch = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ models: [] })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Ollama offline' }), { status: 502 }))
+        vi.stubGlobal('fetch', fetch)
+        await expect(api.providers()).rejects.toThrow('invalid model catalog')
+        await expect(api.models('ollama')).rejects.toThrow('Ollama offline')
+    })
     it('sends resize in the form and rejects mixed PDF uploads', async () => {
         const fetch = vi.fn().mockResolvedValue(new Response('true'))
         vi.stubGlobal('fetch', fetch)

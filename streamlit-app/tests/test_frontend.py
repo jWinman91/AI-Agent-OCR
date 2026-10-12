@@ -13,11 +13,6 @@ from streamlit.testing.v1 import AppTest
 FRONTEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(FRONTEND))
 
-from src.backend_client.model_retriever import (  # noqa: E402
-    OPENAI_MODELS,
-    get_ollama_models,
-    get_openai_models,
-)
 from src.backend_client.request_be import BeRequest  # noqa: E402
 from src.parent_run import ParentRun  # noqa: E402
 
@@ -64,29 +59,22 @@ class HttpTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 client.get("get_config")
 
-    @patch("requests.get")
+    @patch("requests.request")
     def test_discovery(self, request: Mock) -> None:
-        request.return_value = Mock()
-        request.return_value.json.return_value = {"models": [{"name": "gemma4"}]}
-        self.assertEqual(get_ollama_models(), ["gemma4"])
-        self.assertEqual(request.call_args.kwargs["timeout"], (3, 10))
-        for body in ({}, {"models": None}, {"models": [{}]}):
-            request.return_value.json.return_value = body
-            with self.assertRaises(RuntimeError):
-                get_ollama_models()
-        request.side_effect = requests.ConnectionError()
-        with self.assertRaises(RuntimeError):
-            get_ollama_models()
-
-    @patch("requests.get")
-    def test_openai_discovery(self, request: Mock) -> None:
-        models = get_openai_models()
-        self.assertEqual(models, list(OPENAI_MODELS))
-        self.assertTrue(models)
-        self.assertEqual(len(models), len(set(models)))
-        models.clear()
-        self.assertEqual(get_openai_models(), list(OPENAI_MODELS))
-        request.assert_not_called()
+        client = BeRequest()
+        request.return_value = Mock(status_code=200)
+        request.return_value.json.return_value = ["openai", "ollama", "custom"]
+        self.assertEqual(
+            client.get("get_model_providers/"), ["openai", "ollama", "custom"]
+        )
+        request.return_value.json.return_value = ["custom-model"]
+        self.assertEqual(
+            client.get("get_models/", params={"model_provider": "custom"}),
+            ["custom-model"],
+        )
+        self.assertEqual(
+            request.call_args.kwargs["params"], {"model_provider": "custom"}
+        )
 
 
 class ResultTests(unittest.TestCase):
@@ -193,13 +181,17 @@ from typing import Literal
 class BeRequest:
     def __init__(self, *args): pass
     def get(self, **kwargs):
+        if kwargs['path'] == 'get_model_providers/':
+            return ['openai', 'ollama', 'custom']
+        if kwargs['path'] == 'get_models/':
+            if kwargs['params']['model_provider'] == 'ollama':
+                DISCOVERY
+            if kwargs['params']['model_provider'] == 'custom':
+                return ['custom-model']
+            return ['gpt-5', 'gpt-4.1']
         return dict(model_provider='openai', model='gpt-5', system_prompt_user='same')
     def post(self, *args, **kwargs):
         return SAVE_RESULT
-def get_ollama_models():
-    DISCOVERY
-def get_openai_models():
-    return ['gpt-5', 'gpt-4.1']
 """.replace("SAVE_RESULT", save).replace("DISCOVERY", discovery)
         script += class_source("agent_configurations.py")
         script += "\nAgentConfigurations().build_page()"
@@ -249,6 +241,16 @@ def get_openai_models():
         self.assertEqual(
             app.selectbox(key="openai_model_selectbox_analyser").value, "gpt-5"
         )
+
+    def test_custom_provider_catalog(self) -> None:
+        app = self.configuration_app()
+        app.selectbox(key="model_provider_selectbox_analyser").select("custom").run()
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            app.selectbox(key="custom_model_selectbox_analyser").value,
+            "custom-model",
+        )
+        self.assertFalse(app.button(key="save_configuration_button_analyser").disabled)
 
     def test_discovery_outage_and_save_failure(self) -> None:
         for discovery in ("return []", "raise RuntimeError('Ollama offline')"):

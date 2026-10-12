@@ -16,6 +16,12 @@ class YFinanceRequest(BaseModel):
     end: Optional[str] = Field(None, description="End date YYYY-MM-DD")
 
 
+# Model provider model
+class ModelProvider(BaseModel):
+    available_models: list[str] = Field(default_factory=list)
+    retriever_function: str | None = None
+
+
 # Config models
 class ConfigModelBase(BaseModel):
     """

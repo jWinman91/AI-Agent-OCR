@@ -10,6 +10,7 @@ from loguru import logger
 from src.agents.agents_runner import AgentRunner
 from src.config_builder import ConfigBuilder
 from src.file_manager import FileManager
+from src.model_retriever import ModelRetriever
 from src.preprocessor import Preprocessor
 from src.utils.data_models import (
     AgentResult,
@@ -27,6 +28,8 @@ class AiAgentOcrApp:
         image_dir: Path = Path("images"),
         text_dir: Path = Path("texts"),
         agent_config_path: Path = Path("configs/agents.yaml"),
+        model_config_path: Path = Path(__file__).resolve().parent
+        / "configs/available_models.yaml",
     ) -> None:
         """
         Initializes the AiAgentOcrApp with the given parameters.
@@ -47,6 +50,7 @@ class AiAgentOcrApp:
         self._data_file_path: Path | None = None
 
         self.CONFIG_BUILDER = ConfigBuilder(agent_config_path)
+        self.MODEL_RETRIEVER = ModelRetriever(model_config_path)
         self.FILE_MANAGER = FileManager(
             data_dir=data_dir,
             plot_dir=output_dir,
@@ -65,6 +69,22 @@ class AiAgentOcrApp:
         self._register_routes()
 
     def _register_routes(self) -> None:
+        @self.app.get("/get_model_providers/")
+        def get_model_providers() -> list[str]:
+            return self.MODEL_RETRIEVER.get_model_providers()
+
+        @self.app.get("/get_models/")
+        def get_models(model_provider: str) -> list[str]:
+            try:
+                return self.MODEL_RETRIEVER.get_models(model_provider)
+            except KeyError as error:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Unknown model provider: {model_provider}",
+                ) from error
+            except RuntimeError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from error
+
         @self.app.post("/upload_config/")
         async def upload_config(
             config_name: Literal["data_extractor", "analyser"], config: ConfigModelUser

@@ -16,8 +16,12 @@ beforeEach(() => {
             system_prompt_user: 'Extract accurately.',
           }),
         )
-      if (url.includes('tags'))
-        return new Response(JSON.stringify({ models: [{ name: 'gemma4:latest' }] }))
+      if (url.includes('get_model_providers'))
+        return new Response(JSON.stringify(['openai', 'ollama', 'custom']))
+      if (url.includes('get_models'))
+        return new Response(JSON.stringify(
+          url.includes('ollama') ? ['gemma4:latest'] : url.includes('custom') ? ['custom-model'] : ['gpt-5'],
+        ))
       if (url.includes('run_single_agent'))
         return new Response(
           JSON.stringify({
@@ -68,6 +72,9 @@ it('renders independent provider and model forms without manual model entry', as
   expect(screen.queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument()
   fireEvent.change(screen.getAllByLabelText('Provider')[1], { target: { value: 'ollama' } })
   await waitFor(() => expect(screen.getAllByLabelText('Model')[1]).toHaveValue('gemma4:latest'))
+  fireEvent.change(screen.getAllByLabelText('Provider')[1], { target: { value: 'custom' } })
+  await waitFor(() => expect(screen.getAllByLabelText('Model')[1]).toHaveValue('custom-model'))
+  expect(screen.getAllByLabelText('Model')[0]).toHaveValue('gpt-5')
 })
 
 it('uploads documents only after resolution confirmation and supports cancelling and reselection', async () => {

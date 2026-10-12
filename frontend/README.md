@@ -1,7 +1,7 @@
 # AI Agent OCR Frontend
 
 React and TypeScript workspace for the existing FastAPI backend. Streamlit remains
-available separately. No backend API changes are required.
+available separately. Provider and model discovery is handled by the backend.
 
 ## Development
 
@@ -21,16 +21,17 @@ npm run dev
 ```
 
 Open the Vite URL (normally http://localhost:5173). Vite proxies `/api` to
-http://127.0.0.1:8000 and `/ollama` to http://127.0.0.1:11434.
-Set `BACKEND_URL` or `OLLAMA_URL` when starting Vite to use different targets.
+http://127.0.0.1:8000. Set `BACKEND_URL` when starting Vite to use a different target.
+Set `OLLAMA_BASE_URL` on the backend to change its Ollama discovery target.
 Set `VITE_AGENT_TIMEOUT_SECONDS` to change the default 1800-second agent timeout.
 A browser timeout does not cancel backend work; avoid submitting duplicate runs.
 
 ## Workflows
 
 - Configure the data extractor and analyser: provider/model, user system prompt,
-  OpenAI key, save and reset. OpenAI models use a maintained list in `src/api.ts`;
-  Ollama models are discovered dynamically. Keys are not stored in browser storage.
+  OpenAI key, save and reset. Providers and models come from the backend catalog
+  in `backend/configs/available_models.yaml`; Ollama models are discovered dynamically.
+  Keys are not stored in browser storage.
 - Run the full pipeline with one multi-page PDF or multiple PNG/JPEG files.
 - Run just the extractor (five-row result preview) or analyser (CSV/XLSX input,
   or an external-data request without upload).
@@ -77,7 +78,7 @@ not enabled and table behavior is covered by tests.
 ## Production
 
 `npm run build` generates static files in `dist/`. Serve these with SPA fallback
-to `index.html` and reverse proxies for `/api/*` (strip `/api`) and `/ollama/*`
-(strip `/ollama`). Configure long proxy timeouts for agent calls. Vite's development
+to `index.html` and a reverse proxy for `/api/*` (strip `/api`).
+Configure long proxy timeouts for agent calls. Vite's development
 proxy is not bundled into the production build. Existing Docker/Streamlit startup
 is deliberately unchanged.

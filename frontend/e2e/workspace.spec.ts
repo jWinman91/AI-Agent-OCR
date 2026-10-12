@@ -3,6 +3,12 @@ import { expect, test } from '@playwright/test'
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname
+    if (path.includes('get_model_providers'))
+      return route.fulfill({ json: ['openai', 'ollama'] })
+    if (path.includes('get_models'))
+      return route.fulfill({
+        json: route.request().url().includes('ollama') ? ['gemma4:latest'] : ['gpt-5'],
+      })
     if (path.includes('get_config'))
       return route.fulfill({
         json: {
@@ -40,9 +46,6 @@ test.beforeEach(async ({ page }) => {
       })
     return route.fulfill({ json: true })
   })
-  await page.route('**/ollama/**', (route) =>
-    route.fulfill({ json: { models: [{ name: 'gemma4:latest' }] } }),
-  )
 })
 
 test('configuration, PDF upload, generated outputs and navigation retention', async ({ page }) => {

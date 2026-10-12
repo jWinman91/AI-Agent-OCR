@@ -4,7 +4,7 @@ export type AgentName = 'data_extractor' | 'analyser'
 export type Workflow = 'pipeline' | 'extractor' | 'analyser'
 export type AgentConfig = {
   model: string
-  model_provider: 'openai' | 'ollama'
+  model_provider: string
   system_prompt_user: string
   base_url?: string | null
   output_type?: boolean | null
@@ -25,19 +25,6 @@ export type ResultView = {
   errors: string[]
 }
 
-export const OPENAI_MODELS = [
-  'gpt-6-astra',
-  'gpt-6.1-sol',
-  'gpt-6-luna',
-  'gpt-5',
-  'gpt-5-mini',
-  'gpt-5-nano',
-  'gpt-4.1',
-  'gpt-4.1-mini',
-  'gpt-4.1-nano',
-  'gpt-4o',
-  'gpt-4o-mini',
-]
 export const outputPath = (path?: string | null) => (path && path !== '.' ? path : undefined)
 const encodePath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
 
@@ -81,6 +68,12 @@ async function confirmed(path: string, init: RequestInit) {
   if ((await json<unknown>(path, init)) !== true)
     throw new Error('The backend did not confirm the operation.')
 }
+async function catalog(path: string): Promise<string[]> {
+  const values = await json<unknown>(path)
+  if (!Array.isArray(values) || values.some((value) => typeof value !== 'string' || !value))
+    throw new Error('The backend returned an invalid model catalog.')
+  return values
+}
 export const api = {
   initialize: () => confirmed('/api/update_agents/', { method: 'POST' }),
   config: (agent: AgentName) => json<AgentConfig>(`/api/get_config/?config_name=${agent}`),
@@ -98,15 +91,9 @@ export const api = {
   },
   setKey: (key: string) =>
     confirmed(`/api/set_openai_api_key/?api_key=${encodeURIComponent(key)}`, { method: 'POST' }),
-  models: async () => {
-    const catalog = await json<{ models: { name: string }[] }>('/ollama/api/tags', {}, 10000)
-    if (
-      !Array.isArray(catalog.models) ||
-      catalog.models.some((model) => typeof model.name !== 'string')
-    )
-      throw new Error('Ollama returned an invalid model list.')
-    return catalog.models.map((model) => model.name)
-  },
+  providers: () => catalog('/api/get_model_providers/'),
+  models: (provider: string) =>
+    catalog(`/api/get_models/?model_provider=${encodeURIComponent(provider)}`),
   upload: async (workflow: Workflow, files: File[], resize: string) => {
     if (!files.length) throw new Error('Select a file before uploading.')
     const pdf = files.some((file) => file.name.toLowerCase().endsWith('.pdf'))
@@ -137,7 +124,7 @@ export const api = {
     return result
   },
 }
-export class AgentFailure extends Error {}
+export class AgentFailure extends Error { }
 
 export async function loadResult(result: AgentResult, workflow: Workflow): Promise<ResultView> {
   const view: ResultView = { columns: [], rows: [], summary: result.code_summary || '', errors: [] }

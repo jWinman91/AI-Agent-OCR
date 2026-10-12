@@ -1,5 +1,35 @@
 # Documentation on existing routes
 
+## Model discovery
+
+- `GET /get_model_providers/` returns a JSON list of provider names from
+  `backend/configs/available_models.yaml`, for example `["openai", "ollama"]`.
+- `GET /get_models/?model_provider=ollama` returns a JSON list of model names.
+  Unknown providers return HTTP 404. Retriever failures or unregistered retriever
+  names return HTTP 502 with an error in `detail`.
+
+The catalog is loaded when the backend starts. Restart the backend after editing it.
+Each entry under `model_provider` uses `retriever_function` when supplied;
+otherwise its `available_models` list is returned. A retriever takes precedence
+even if a static list is also configured, and errors do not fall back to that list.
+
+To add a static provider, add an entry to the YAML:
+
+```yaml
+model_provider:
+  custom:
+    available_models:
+      - custom-model
+```
+
+For dynamic discovery, implement a function returning `list[str]` in
+`backend/src/model_retriever.py`, register it in `ModelRetriever.retrievers`, and
+set the entry's `retriever_function` to its registered name. Both frontends load
+their provider and model selectors from these routes. Discovery entries do not
+add model execution support; the agent framework must also support the provider.
+Ollama discovery uses the backend's `OLLAMA_BASE_URL` environment variable,
+defaulting to `http://localhost:11434`.
+
 ## Config handling API routes:
 - `/upload_config(config: ConfigModel) -> bool`:
   - Purpose: Update a config file

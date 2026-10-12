@@ -1,7 +1,6 @@
 from typing import Literal
 
 import streamlit as st
-from src.backend_client.model_retriever import get_ollama_models, get_openai_models
 from src.backend_client.request_be import BeRequest
 
 
@@ -60,11 +59,12 @@ class AgentConfigurations:
         if st.session_state.pop(f"pending_reset_{agent_name}", False):
             for prefix in (
                 "system_prompt",
-                "openai_model_selectbox",
                 "model_provider_selectbox",
-                "ollama_model_selectbox",
             ):
                 st.session_state.pop(f"{prefix}_{agent_name}", None)
+            for widget_key in list(st.session_state):
+                if widget_key.endswith(f"_model_selectbox_{agent_name}"):
+                    st.session_state.pop(widget_key, None)
         st.subheader(f"{agent_name.capitalize()} Configuration")
         config = self._request_be.get(
             path="get_config",
@@ -82,44 +82,42 @@ class AgentConfigurations:
         )
 
         model_provider_preset = config.get("model_provider", "openai")
+        model_providers = self._request_be.get(path="get_model_providers/")
+        if not model_providers:
+            st.error("No model providers available.")
+            return
         model_provider = st.selectbox(
             "Model Provider",
-            options=["openai", "ollama"],
-            index=["openai", "ollama"].index(
-                model_provider_preset
-                if model_provider_preset in {"openai", "ollama"}
-                else "openai"
-            ),
+            options=model_providers,
+            index=model_providers.index(model_provider_preset)
+            if model_provider_preset in model_providers
+            else 0,
             key=f"model_provider_selectbox_{agent_name}",
         )
 
         model = None
-        if model_provider == "ollama":
-            try:
-                ollama_models = get_ollama_models()
-            except RuntimeError as error:
-                st.error(str(error))
-                ollama_models = []
-            if ollama_models:
-                saved_model = config.get("model")
-                if saved_model not in ollama_models:
-                    st.warning("Configured model is unavailable. Select a replacement.")
-                model_key = f"ollama_model_selectbox_{agent_name}"
-                if st.session_state.get(model_key) not in ollama_models:
-                    st.session_state.pop(model_key, None)
-                model = st.selectbox(
-                    "Model",
-                    options=ollama_models,
-                    index=ollama_models.index(saved_model)
-                    if saved_model in ollama_models
-                    else 0,
-                    key=model_key,
-                )
-            else:
-                st.warning(
-                    "No Ollama models available. Start Ollama and pull a model, "
-                    "or select OpenAI."
-                )
+        try:
+            models = self._request_be.get(
+                path="get_models/", params={"model_provider": model_provider}
+            )
+        except RuntimeError as error:
+            st.error(str(error))
+            models = []
+        if models:
+            saved_model = config.get("model")
+            if saved_model not in models:
+                st.warning("Configured model is unavailable. Select a replacement.")
+            model_key = f"{model_provider}_model_selectbox_{agent_name}"
+            if st.session_state.get(model_key) not in models:
+                st.session_state.pop(model_key, None)
+            model = st.selectbox(
+                "Model",
+                options=models,
+                index=models.index(saved_model) if saved_model in models else 0,
+                key=model_key,
+            )
+        else:
+            st.warning(f"No models available for {model_provider}.")
         if model_provider == "openai":
             api_key = st.text_input(
                 "API Key",
@@ -134,24 +132,6 @@ class AgentConfigurations:
                     {"api_key": api_key},
                     payload_type="params",
                 )
-
-            openai_models = get_openai_models()
-            if openai_models:
-                saved_model = config.get("model")
-                model_key = f"openai_model_selectbox_{agent_name}"
-                if st.session_state.get(model_key) not in openai_models:
-                    st.session_state.pop(model_key, None)
-                model = st.selectbox(
-                    "Model",
-                    options=openai_models,
-                    index=openai_models.index(saved_model)
-                    if saved_model in openai_models
-                    else 0,
-                    key=model_key,
-                    help="Maintained model list; availability depends on your account.",
-                )
-            else:
-                st.warning("No OpenAI models available in the maintained list.")
 
         if st.button(
             "Save Configuration",

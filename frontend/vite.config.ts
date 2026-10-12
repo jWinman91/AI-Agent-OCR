@@ -11,11 +11,6 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
-      '/ollama': {
-        target: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/ollama/, ''),
-      },
     },
   },
   test: {
