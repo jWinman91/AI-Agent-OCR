@@ -169,8 +169,7 @@ class BeRequest:
         # UploadFile.read() is async, so pass its underlying .file instead of
         # the UploadFile itself.
         files = [
-            ("files", (data_file.filename, data_file.file))
-            for data_file in data_files
+            ("files", (data_file.filename, data_file.file)) for data_file in data_files
         ]
 
         if params:

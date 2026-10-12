@@ -326,9 +326,7 @@ def run_all_experiments(run_name: str) -> None:
             # Only data the user needs to add (missing prompt/ground
             # truth/test files) is skipped - anything else (backend errors,
             # extraction failures, ...) still propagates and stops the batch.
-            logger.error(
-                f"Skipping experiment '{experiment_name}': {e}"
-            )
+            logger.error(f"Skipping experiment '{experiment_name}': {e}")
             log_skipped_to_mlflow(experiment_name, run_name, reason=str(e))
 
 
