@@ -13,8 +13,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
 )
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ollama import OllamaProvider
+from pydantic_ai.models import infer_model
 from src.agents.output_validator import OutputValidator
 from src.utils.data_models import AgentResponse, ConfigModelBuild
 
@@ -83,7 +82,6 @@ class AgentsFactory:
             exclude={
                 "model",
                 "model_provider",
-                "base_url",
                 "output_type",
                 "model_settings",
             }
@@ -98,13 +96,7 @@ class AgentsFactory:
         if config.output_type:
             agent_config["output_type"] = output_type
 
-        if config.model_provider == "ollama":
-            agent_config["model"] = OpenAIChatModel(
-                model_name=config.model,
-                provider=OllamaProvider(base_url=config.base_url),
-            )
-        else:
-            agent_config["model"] = f"{config.model_provider}:{config.model}"
+        agent_config["model"] = infer_model(f"{config.model_provider}:{config.model}")
 
         agent = Agent(**agent_config)
         agent.name = agent_name

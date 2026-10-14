@@ -6,7 +6,6 @@ export type AgentConfig = {
   model: string
   model_provider: string
   system_prompt_user: string
-  base_url?: string | null
   output_type?: boolean | null
 }
 export type AgentResult = {

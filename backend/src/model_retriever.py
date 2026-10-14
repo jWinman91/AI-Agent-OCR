@@ -23,7 +23,11 @@ class ModelRetriever:
 
     @staticmethod
     def get_ollama_models() -> list[str]:
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        base_url = (
+            os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            .rstrip("/")
+            .removesuffix("/v1")
+        )
         try:
             response = requests.get(f"{base_url}/api/tags", timeout=(3, 10))
             response.raise_for_status()

@@ -41,6 +41,7 @@ class AiAgentOcrApp:
         :param text_dir: Directory to store text files
         :param agent_config_path: Path to the agent configuration file
         """
+        os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         self.IP = ip
         self.PORT = port
 

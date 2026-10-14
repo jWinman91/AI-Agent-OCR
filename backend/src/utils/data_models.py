@@ -31,7 +31,6 @@ class ConfigModelBase(BaseModel):
     model: str
     model_provider: Optional[str] = "openai"
     output_type: Optional[bool] = False
-    base_url: Optional[str] = "http://localhost:11434/v1"
     model_settings: dict[str, Any] = Field(default_factory=dict)
 
 
