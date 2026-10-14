@@ -16,11 +16,14 @@ from pydantic_ai.exceptions import ModelAPIError  # noqa: E402
 from src.agents.agents_factory import AgentsFactory  # noqa: E402
 from src.agents.agents_runner import AgentRunner  # noqa: E402
 from src.agents.output_validator import OutputValidator  # noqa: E402
+from src.server.analysis_policy import compile_analysis  # noqa: E402
 from src.server.plot_server import execute_python_code  # noqa: E402
 from src.utils.data_models import (  # noqa: E402
     AnalyserResponse,
     AnalyserResult,
     ConfigModelBuild,
+    ConfigModelDB,
+    ConfigModelUser,
     DataDownloadResponse,
     DataDownloadResult,
     DataExtractorPrompt,
@@ -38,18 +41,15 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         config = ConfigModelBuild(
             model="gemma4:latest",
             model_provider="ollama",
-            base_url="http://localhost:11434/v1",
             output_type=True,
             model_settings={"temperature": 0.2, "top_p": 0.9},
             system_prompt="Analyse {dataset}",
         )
         model = Mock()
-        provider = Mock()
         agent = Mock()
 
         with (
-            patch("src.agents.agents_factory.OllamaProvider", return_value=provider),
-            patch("src.agents.agents_factory.OpenAIChatModel", return_value=model),
+            patch("src.agents.agents_factory.infer_model", return_value=model) as infer,
             patch("src.agents.agents_factory.Agent", return_value=agent) as agent_ctor,
         ):
             result = factory.create_agent(
@@ -58,6 +58,7 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
                 AnalyserResponse,
                 system_prompt_args={"dataset": "transactions"},
             )
+            infer.assert_called_once_with("ollama:gemma4:latest")
 
         self.assertIs(result, agent)
         self.assertEqual(agent.name, "analyser")
@@ -73,21 +74,66 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         factory = AgentsFactory.__new__(AgentsFactory)
         factory.AGENT_NAMES = ["analyser"]
-        config = ConfigModelBuild(
-            model="model-name",
-            model_provider="openai",
-            output_type=False,
-            system_prompt="Analyse the data",
+        for provider_name in ("openai", "anthropic", "ollama"):
+            with self.subTest(provider=provider_name):
+                config = ConfigModelBuild(
+                    model="model-name",
+                    model_provider=provider_name,
+                    output_type=False,
+                    system_prompt="Analyse the data",
+                )
+                agent = Mock()
+                model = Mock()
+                with (
+                    patch(
+                        "src.agents.agents_factory.infer_model", return_value=model
+                    ) as infer,
+                    patch(
+                        "src.agents.agents_factory.Agent", return_value=agent
+                    ) as agent_ctor,
+                ):
+                    result = factory.create_agent("analyser", config, AnalyserResponse)
+                    infer.assert_called_once_with(f"{provider_name}:model-name")
+                self.assertIs(result, agent)
+                agent_ctor.assert_called_once_with(
+                    model=model,
+                    system_prompt="Analyse the data",
+                )
+
+    def test_config_models_ignore_legacy_base_url(self) -> None:
+        legacy_config = {
+            "model": "gemma4:latest",
+            "model_provider": "ollama",
+            "base_url": "http://legacy:11434/v1",
+            "system_prompt": "Analyse data",
+            "system_prompt_user": "Analyse data",
+            "system_prompt_template": "$user_part",
+        }
+        for config_type in (ConfigModelBuild, ConfigModelDB, ConfigModelUser):
+            with self.subTest(config_type=config_type.__name__):
+                config = config_type.model_validate(legacy_config)
+                self.assertNotIn("base_url", config.model_dump())
+                self.assertNotIn("base_url", config_type.model_fields)
+                self.assertNotIn(
+                    "base_url", config_type.model_json_schema()["properties"]
+                )
+
+    def test_ollama_uses_environment_url_not_legacy_config(self) -> None:
+        factory = AgentsFactory.__new__(AgentsFactory)
+        factory.AGENT_NAMES = ["analyser"]
+        config = ConfigModelBuild.model_validate(
+            {
+                "model": "gemma4:latest",
+                "model_provider": "ollama",
+                "base_url": "http://legacy:11434/v1",
+                "system_prompt": "Analyse data",
+            }
         )
-        agent = Mock()
-
-        with patch("src.agents.agents_factory.Agent", return_value=agent) as agent_ctor:
-            result = factory.create_agent("analyser", config, AnalyserResponse)
-
-        self.assertIs(result, agent)
-        agent_ctor.assert_called_once_with(
-            model="openai:model-name",
-            system_prompt="Analyse the data",
+        with patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://ollama:11434/v1"}):
+            agent = factory.create_agent("analyser", config, AnalyserResponse)
+        self.assertEqual(agent.model.system, "ollama")
+        self.assertEqual(
+            str(agent.model.base_url).rstrip("/"), "http://ollama:11434/v1"
         )
 
     async def test_malformed_downloader_does_not_execute(self) -> None:
@@ -211,6 +257,43 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Provider unavailable", result.error_message)
         self.assertEqual(runner.agents.create_agent.call_count, 1)
 
+    async def test_unsafe_analysis_failure_does_not_run_repair(self) -> None:
+        for error_message in (
+            "ValueError: Unsafe analysis code: import 'os' is not allowed",
+            "Traceback (most recent call last):\n"
+            "ValueError: unsafe analysis code: "
+            "output must stay in the output directory",
+            "UNSAFE ANALYSIS CODE: attribute '__class__' is not allowed",
+        ):
+            with self.subTest(error_message=error_message):
+                failure = AnalyserResult(
+                    df_file_path=None,
+                    data_file_path=None,
+                    plot_path=None,
+                    python_code="import os",
+                    code_summary="summary",
+                    error_message=error_message,
+                )
+                runner = AgentRunner.__new__(AgentRunner)
+                runner.CONFIG = {"analyser": Mock()}
+                runner.agents = Mock()
+                runner.agents.run_agent = AsyncMock(return_value=failure)
+                with patch(
+                    "src.agents.agents_runner.get_dataset_metadata", return_value=""
+                ):
+                    result = await runner.run_analyser(
+                        "request",
+                        {"data_file_path": None, "downloaded_data_file_path": None},
+                    )
+                self.assertIs(result, failure)
+                self.assertEqual(result.error_message, error_message)
+                self.assertEqual(runner.agents.create_agent.call_count, 1)
+                runner.agents.run_agent.assert_awaited_once()
+                self.assertEqual(
+                    runner.agents.create_agent.call_args.kwargs["agent_name"],
+                    "analyser",
+                )
+
     async def test_parsed_response_and_execution_callback(self) -> None:
         factory = AgentsFactory.__new__(AgentsFactory)
         response = AnalyserResponse(python_code="pass", code_summary="summary")
@@ -328,6 +411,175 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
 
 
 class ExecutionDataContracts(unittest.TestCase):
+    def test_unsafe_analysis_code_is_rejected_before_execution(self) -> None:
+        programs = (
+            "import os\nos.system('echo unsafe')",
+            "from subprocess import run\nrun(['echo', 'unsafe'])",
+            "open('secret.txt').read()",
+            "eval('1 + 1')",
+            "getattr(df, 'to_pickle')('unsafe.pkl')",
+            "df.__class__.__mro__",
+            "import pandas as pd\npd.read_csv('https://example.com/data.csv')",
+            "from pandas import read_pickle as load\nload('unsafe.pkl')",
+            "import numpy as np\nnp.load('unsafe.npy', allow_pickle=True)",
+            "import numpy.ctypeslib",
+            "from matplotlib import *",
+            "import pandas as pd\npd.eval('1 + 1')",
+            "df.query('value > 0')",
+            "reader = df.to_pickle",
+            "import pandas as pd\npd.io.common.os.system('echo unsafe')",
+            "'{0.__class__}'.format(df)",
+            "from . import pandas",
+            "from numpy import mean as eval",
+            "import numpy as np\nnp.__dict__['load']('unsafe.npy')",
+            "writer = df.to_csv",
+            "import matplotlib.pyplot as plt\nwriter = plt.savefig",
+            "while True:\n    pass",
+            "class Unsafe:\n    pass",
+            "df.to_csv = lambda path: None",
+        )
+        for program in programs:
+            with self.subTest(program=program):
+                with (
+                    patch(
+                        "src.server.plot_server.pd.read_csv",
+                        return_value=pd.DataFrame({"value": [1]}),
+                    ),
+                    patch("builtins.exec") as execute,
+                ):
+                    result = execute_python_code(
+                        AnalyserResponse(python_code=program, code_summary="summary"),
+                        Path("data.csv"),
+                        None,
+                    )
+                execute.assert_not_called()
+                self.assertIn("Unsafe analysis code", result.error_message)
+                self.assertIsNone(result.plot_path)
+                self.assertIsNone(result.df_file_path)
+
+    def test_representative_imports_from_all_allowed_libraries(self) -> None:
+        programs = (
+            "import pandas as pd\nresult = df.groupby('value').mean()",
+            "import polars as pl\nresult = pl.from_pandas(df).select(pl.col('value'))",
+            "import matplotlib.pyplot as plt\nplt.plot(df['value'])",
+            "import seaborn as sns\nsns.histplot(data=df, x='value')",
+            "import numpy as np\nresult = np.mean(df['value'])",
+            "from sklearn.preprocessing import StandardScaler\n"
+            "model = StandardScaler()",
+            "import statsmodels.api as sm\nmodel = sm.OLS(df['value'], df[['value']])",
+            "from sktime.forecasting.naive import NaiveForecaster\n"
+            "model = NaiveForecaster()",
+        )
+        for program in programs:
+            with self.subTest(program=program):
+                self.assertIsNotNone(compile_analysis(program))
+
+    def test_output_escape_and_invalid_extensions_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "outputs"
+            output_dir.mkdir()
+            (output_dir / "link").symlink_to(root, target_is_directory=True)
+            targets = (
+                root / "escaped.csv",
+                output_dir / ".." / "traversal.csv",
+                output_dir / "link" / "symlink.csv",
+                output_dir / "not_csv.py",
+            )
+            for target in targets:
+                with self.subTest(target=target):
+                    with patch(
+                        "src.server.plot_server.pd.read_csv",
+                        return_value=pd.DataFrame({"value": [1]}),
+                    ):
+                        result = execute_python_code(
+                            AnalyserResponse(
+                                python_code=f"df.to_csv({str(target)!r})",
+                                code_summary="summary",
+                            ),
+                            Path("data.csv"),
+                            None,
+                            output_dir=output_dir,
+                        )
+                    self.assertIn("Unsafe analysis code", result.error_message)
+                    self.assertFalse(target.exists())
+
+    def test_polars_analysis_and_keyword_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "polars.csv"
+            program = (
+                "import polars as pl\n"
+                "result = pl.from_pandas(df).select(pl.col('value').mean())\n"
+                f"df_file_path = {str(csv_path)!r}\n"
+                "result.write_csv(file=df_file_path)\n"
+            )
+            with patch(
+                "src.server.plot_server.pd.read_csv",
+                return_value=pd.DataFrame({"value": [1, 2, 3]}),
+            ):
+                result = execute_python_code(
+                    AnalyserResponse(python_code=program, code_summary="summary"),
+                    Path("data.csv"),
+                    None,
+                    output_dir=Path(directory),
+                )
+            self.assertIsNone(result.error_message)
+            self.assertEqual(result.df_file_path, csv_path)
+            self.assertIn("2.0", csv_path.read_text())
+
+    def test_invalid_syntax_returns_an_error_without_execution(self) -> None:
+        with (
+            patch(
+                "src.server.plot_server.pd.read_csv",
+                return_value=pd.DataFrame({"value": [1]}),
+            ),
+            patch("builtins.exec") as execute,
+        ):
+            result = execute_python_code(
+                AnalyserResponse(python_code="if:", code_summary="summary"),
+                Path("data.csv"),
+                None,
+            )
+        execute.assert_not_called()
+        self.assertIn("SyntaxError", result.error_message)
+
+    def test_allowed_analysis_and_plotting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plot_path = Path(directory) / "plot.png"
+            csv_path = Path(directory) / "analysis.csv"
+            program = (
+                "import pandas as pd\n"
+                "import numpy as np\n"
+                "import matplotlib.pyplot as plt\n"
+                "from sklearn.linear_model import LinearRegression\n"
+                "data = df.copy() if df is not None else df_download.copy()\n"
+                "model = LinearRegression().fit(data[['value']], data['value'])\n"
+                "data['prediction'] = model.predict(data[['value']])\n"
+                "data['mean'] = np.mean(data['value'])\n"
+                "fig, ax = plt.subplots()\n"
+                "ax.plot(data['value'], data['prediction'])\n"
+                f"plot_path = {str(plot_path)!r}\n"
+                "fig.savefig(plot_path)\n"
+                "plt.close(fig)\n"
+                f"df_file_path = {str(csv_path)!r}\n"
+                "data.to_csv(df_file_path, index=False)\n"
+            )
+            with patch(
+                "src.server.plot_server.pd.read_csv",
+                return_value=pd.DataFrame({"value": [1, 2, 3]}),
+            ):
+                result = execute_python_code(
+                    AnalyserResponse(python_code=program, code_summary="summary"),
+                    Path("data.csv"),
+                    None,
+                    output_dir=Path(directory),
+                )
+            self.assertIsNone(result.error_message)
+            self.assertTrue(plot_path.is_file())
+            self.assertTrue(csv_path.is_file())
+            self.assertEqual(result.plot_path, plot_path)
+            self.assertEqual(result.df_file_path, csv_path)
+
     def test_missing_or_empty_datasets_skip_execution(self) -> None:
         empty = pd.DataFrame(columns=["value"])
         for extracted, downloaded in (

@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -39,6 +40,29 @@ class FileRoutes(unittest.TestCase):
         self.server.app = FastAPI()
         self.server._register_routes()
         self.client = TestClient(self.server.app)
+
+    def test_startup_sets_ollama_url_before_agents_and_preserves_override(self) -> None:
+        for environment, expected_url in (
+            ({}, "http://localhost:11434/v1"),
+            ({"OLLAMA_BASE_URL": "http://ollama:11434/v1"}, "http://ollama:11434/v1"),
+        ):
+            with self.subTest(environment=environment):
+
+                def create_runner(**kwargs: object) -> MagicMock:
+                    self.assertEqual(os.environ["OLLAMA_BASE_URL"], expected_url)
+                    return MagicMock()
+
+                with (
+                    patch.dict(os.environ, environment, clear=True),
+                    patch("app.ConfigBuilder"),
+                    patch("app.ModelRetriever"),
+                    patch("app.FileManager"),
+                    patch("app.Preprocessor"),
+                    patch("app.AgentRunner", side_effect=create_runner) as runner,
+                ):
+                    AiAgentOcrApp("127.0.0.1", 8000)
+                    self.assertEqual(os.environ["OLLAMA_BASE_URL"], expected_url)
+                    runner.assert_called_once()
 
     def test_model_catalog_routes(self) -> None:
         self.assertEqual(
@@ -92,16 +116,28 @@ class FileRoutes(unittest.TestCase):
 
     def test_ollama_retriever_uses_backend_url_and_validates_response(self) -> None:
         response = MagicMock()
-        response.json.return_value = {"models": [{"name": "local-model"}]}
-        with (
-            patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://ollama:11434/"}),
-            patch("src.model_retriever.requests.get", return_value=response) as get,
+        for base_url in (
+            "http://ollama:11434/",
+            "http://ollama:11434/v1",
+            "http://ollama:11434/v1/",
         ):
-            self.assertEqual(ModelRetriever.get_ollama_models(), ["local-model"])
-            get.assert_called_once_with("http://ollama:11434/api/tags", timeout=(3, 10))
-            response.json.return_value = {"models": [{"name": ""}]}
-            with self.assertRaisesRegex(RuntimeError, "invalid model list"):
-                ModelRetriever.get_ollama_models()
+            with self.subTest(base_url=base_url):
+                response.json.return_value = {"models": [{"name": "local-model"}]}
+                with (
+                    patch.dict("os.environ", {"OLLAMA_BASE_URL": base_url}),
+                    patch(
+                        "src.model_retriever.requests.get", return_value=response
+                    ) as get,
+                ):
+                    self.assertEqual(
+                        ModelRetriever.get_ollama_models(), ["local-model"]
+                    )
+                    get.assert_called_once_with(
+                        "http://ollama:11434/api/tags", timeout=(3, 10)
+                    )
+                    response.json.return_value = {"models": [{"name": ""}]}
+                    with self.assertRaisesRegex(RuntimeError, "invalid model list"):
+                        ModelRetriever.get_ollama_models()
 
     def test_upload_paths_rejected_before_cleanup(self) -> None:
         previous = self.manager.IMAGE_DIR / "previous.png"
