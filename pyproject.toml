@@ -16,6 +16,7 @@ dependencies = [
   "uvicorn",
   "pydantic-ai",
   "pandas",
+  "polars",
   "openpyxl",
   "xlrd",
   "pyaml",

@@ -310,6 +310,7 @@ class AgentRunner:
                 response,
                 system_prompt_args.get("data_file_path"),
                 system_prompt_args.get("downloaded_data_file_path"),
+                output_dir=system_prompt_args.get("output_dir", Path("plots")),
             )
 
         # Add dataset metadata to system prompt args for analyser
@@ -338,6 +339,15 @@ class AgentRunner:
             tool_execution_func=execute_analyser_code,
             error_result_factory=failed_result,
         )
+
+        if (
+            analyser_res.error_message
+            and "unsafe analysis code" in analyser_res.error_message.casefold()
+        ):
+            logger.error(
+                "Analyser safety check failed:\n{}", analyser_res.error_message
+            )
+            return analyser_res
 
         if analyser_res.error_message is None or not analyser_res.python_code:
             return self._error_handling(
