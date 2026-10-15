@@ -13,6 +13,7 @@ beforeEach(() => {
           JSON.stringify({
             model: 'gpt-5',
             model_provider: 'openai',
+            model_settings: { temperature: 0.01, top_p: 1 },
             system_prompt_user: 'Extract accurately.',
           }),
         )
@@ -70,11 +71,82 @@ it('renders independent provider and model forms without manual model entry', as
   expect(await screen.findByRole('heading', { name: 'Data extractor' })).toBeInTheDocument()
   await waitFor(() => expect(screen.getAllByLabelText('Model')).toHaveLength(2))
   expect(screen.queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Temperature')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Top P')).not.toBeInTheDocument()
+  await waitFor(() =>
+    expect(screen.getAllByRole('button', { name: 'Save configuration' })[1]).toBeEnabled(),
+  )
+  fireEvent.click(screen.getAllByRole('button', { name: 'Save configuration' })[1])
+  await waitFor(() =>
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('upload_config')),
+    ).toBe(true),
+  )
+  const openAiSave = vi.mocked(fetch).mock.calls.find(([url]) =>
+    String(url).includes('upload_config'),
+  )
+  expect(JSON.parse(String(openAiSave?.[1]?.body)).model_settings).toEqual({})
   fireEvent.change(screen.getAllByLabelText('Provider')[1], { target: { value: 'ollama' } })
   await waitFor(() => expect(screen.getAllByLabelText('Model')[1]).toHaveValue('gemma4:latest'))
+  expect(screen.getAllByLabelText('Temperature')).toHaveLength(1)
+  expect(screen.getAllByLabelText('Top P')).toHaveLength(1)
   fireEvent.change(screen.getAllByLabelText('Provider')[1], { target: { value: 'custom' } })
   await waitFor(() => expect(screen.getAllByLabelText('Model')[1]).toHaveValue('custom-model'))
   expect(screen.getAllByLabelText('Model')[0]).toHaveValue('gpt-5')
+})
+
+it('edits and saves bounded sampling settings for both Ollama agent forms', async () => {
+  const saves: Record<string, unknown>[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('get_config'))
+        return new Response(JSON.stringify({
+          model: 'gemma4:latest',
+          model_provider: 'ollama',
+          model_settings: {},
+          system_prompt_user: 'Extract accurately.',
+        }))
+      if (url.includes('get_model_providers'))
+        return new Response(JSON.stringify(['openai', 'ollama']))
+      if (url.includes('get_models'))
+        return new Response(JSON.stringify(url.includes('ollama') ? ['gemma4:latest'] : ['gpt-5']))
+      if (url.includes('upload_config')) {
+        saves.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return new Response('true')
+      }
+      return new Response('true')
+    }),
+  )
+  window.history.replaceState({}, '', '/')
+  render(<App />)
+
+  await waitFor(() => expect(screen.getAllByLabelText('Provider')).toHaveLength(2))
+  screen.getAllByLabelText('Provider').forEach((provider) =>
+    fireEvent.change(provider, { target: { value: 'ollama' } }),
+  )
+  await waitFor(() => expect(screen.getAllByLabelText('Temperature')).toHaveLength(2))
+  const temperatures = screen.getAllByLabelText('Temperature')
+  const topPValues = screen.getAllByLabelText('Top P')
+  expect(temperatures[0]).toHaveAttribute('min', '0')
+  expect(temperatures[0]).toHaveAttribute('max', '2')
+  expect(temperatures[0]).toHaveAttribute('step', '0.1')
+  expect(temperatures[0]).toHaveValue('0.01')
+  expect(topPValues[0]).toHaveAttribute('min', '0')
+  expect(topPValues[0]).toHaveAttribute('max', '1')
+  expect(topPValues[0]).toHaveAttribute('step', '0.1')
+  expect(topPValues[0]).toHaveValue(1)
+
+  fireEvent.change(temperatures[0], { target: { value: '1.4' } })
+  fireEvent.change(topPValues[0], { target: { value: '0.7' } })
+  await waitFor(() =>
+    expect(screen.getAllByRole('button', { name: 'Save configuration' })[0]).toBeEnabled(),
+  )
+  fireEvent.click(screen.getAllByRole('button', { name: 'Save configuration' })[0])
+
+  await waitFor(() => expect(saves).toHaveLength(1))
+  expect(saves[0].model_settings).toEqual({ temperature: 1.4, top_p: 0.7 })
 })
 
 it('uploads documents only after resolution confirmation and supports cancelling and reselection', async () => {

@@ -721,10 +721,22 @@ function AgentForm({ agent }: { agent: AgentName }) {
     const selectedModel = draft.model || available[0] || ''
     const missing = !available.includes(selectedModel)
     const providerMissing = !providers.data?.includes(draft.model_provider)
+    const samplingValue = (name: 'temperature' | 'top_p', fallback: number, max: number) => {
+        const value = draft.model_settings?.[name]
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max
+            ? value
+            : fallback
+    }
+    const temperature = samplingValue('temperature', 0.01, 2)
+    const topP = samplingValue('top_p', 1, 1)
     const change = (patch: Partial<AgentConfig>) => {
         setDraft({ ...draft, ...patch })
         setNotice('')
         setError('')
+    }
+    const changeSamplingValue = (name: 'temperature' | 'top_p', value: number, max: number) => {
+        if (!Number.isFinite(value) || value < 0 || value > max) return
+        change({ model_settings: { ...draft.model_settings, [name]: value } })
     }
     const save = () =>
         operation('Saving configuration', async () => {
@@ -732,7 +744,20 @@ function AgentForm({ agent }: { agent: AgentName }) {
             setNotice('')
             try {
                 if (draft.model_provider === 'openai' && key) await api.setKey(key)
-                await api.save(agent, { ...draft, model: selectedModel })
+                await api.save(agent, {
+                    ...draft,
+                    model: selectedModel,
+                    model_settings:
+                        draft.model_provider === 'openai'
+                            ? {}
+                            : draft.model_provider === 'ollama'
+                                ? {
+                                    ...draft.model_settings,
+                                    temperature,
+                                    top_p: topP,
+                                }
+                                : draft.model_settings,
+                })
                 await config.refetch()
                 setNotice('Configuration saved.')
             } catch (failure) {
@@ -810,6 +835,43 @@ function AgentForm({ agent }: { agent: AgentName }) {
                     </select>
                 </label>
             </div>
+            {draft.model_provider === 'ollama' && (
+                <div className="sampling-settings">
+                    <label className="field sampling-field">
+                        <span className="sampling-label">
+                            Temperature <span className="sampling-value" aria-live="polite">{temperature}</span>
+                        </span>
+                        <input
+                            id={`temperature-${agent}`}
+                            aria-label="Temperature"
+                            type="range"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={temperature}
+                            disabled={disabled}
+                            onChange={(event) =>
+                                changeSamplingValue('temperature', Number(event.target.value), 2)
+                            }
+                        />
+                    </label>
+                    <label className="field sampling-field">
+                        Top P
+                        <input
+                            aria-label="Top P"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={topP}
+                            disabled={disabled}
+                            onChange={(event) =>
+                                changeSamplingValue('top_p', event.target.valueAsNumber, 1)
+                            }
+                        />
+                    </label>
+                </div>
+            )}
             <div className="model-status">
                 {models.error ? (
                     <Notice>{message(models.error)}</Notice>

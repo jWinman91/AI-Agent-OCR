@@ -6,6 +6,11 @@ export type AgentConfig = {
   model: string
   model_provider: string
   system_prompt_user: string
+  model_settings?: {
+    temperature?: number
+    top_p?: number
+    [setting: string]: unknown
+  }
   output_type?: boolean | null
 }
 export type AgentResult = {
