@@ -1,11 +1,14 @@
 import argparse
+import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import List, Literal
 
+import requests
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from src.agents.agents_runner import AgentRunner
 from src.config_builder import ConfigBuilder
@@ -70,12 +73,111 @@ class AiAgentOcrApp:
         self._register_routes()
 
     def _register_routes(self) -> None:
+        """Register the FastAPI routes handled by this application."""
+
+        @self.app.get("/ollama/dependency-status/")
+        def ollama_dependency_status() -> dict[str, str | bool | None]:
+            """Report Ollama reachability and required-model installation state.
+
+            :return: A dictionary containing the Ollama dependency status, including:
+                     - "ollama_reachable": Whether Ollama is reachable
+                     - "required_model": The required model name
+                     - "model_installed": Whether the required model is installed
+                     - "ready": Whether the system is ready
+                     - "error": Any error message if applicable
+
+            """
+            required_model = self.CONFIG_BUILDER.load_config_from_db(
+                "orchestrator"
+            ).model
+            try:
+                installed_models = self.MODEL_RETRIEVER.get_ollama_models()
+            except RuntimeError as error:
+                return {
+                    "ollama_reachable": False,
+                    "required_model": required_model,
+                    "model_installed": False,
+                    "ready": False,
+                    "error": str(error),
+                }
+            model_installed = required_model in installed_models
+            return {
+                "ollama_reachable": True,
+                "required_model": required_model,
+                "model_installed": model_installed,
+                "ready": model_installed,
+                "error": None,
+            }
+
+        @self.app.post("/ollama/pull-model/")
+        def pull_required_ollama_model() -> StreamingResponse:
+            """Stream progress while pulling the configured model from Ollama.
+
+            :return: A streaming response that yields progress records as JSON lines.
+            """
+            required_model = self.CONFIG_BUILDER.load_config_from_db(
+                "orchestrator"
+            ).model
+            base_url = (
+                os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+                .rstrip("/")
+                .removesuffix("/v1")
+            )
+            try:
+                upstream = requests.post(
+                    f"{base_url}/api/pull",
+                    json={"name": required_model, "stream": True},
+                    stream=True,
+                    timeout=(3, 60),
+                )
+                upstream.raise_for_status()
+            except requests.RequestException as error:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Cannot download {required_model} from Ollama: {error}",
+                ) from error
+
+            def progress_stream() -> Iterator[str]:
+                """Relay Ollama progress records and close the upstream response.
+
+                :yield: Progress records as JSON lines.
+                """
+                try:
+                    for line in upstream.iter_lines():
+                        if line:
+                            text = (
+                                line.decode("utf-8")
+                                if isinstance(line, bytes)
+                                else line
+                            )
+                            yield f"{text}\n"
+                except requests.RequestException as error:
+                    error_record = json.dumps(
+                        {"error": f"Ollama download failed: {error}"}
+                    )
+                    yield f"{error_record}\n"
+                finally:
+                    upstream.close()
+
+            return StreamingResponse(
+                progress_stream(), media_type="application/x-ndjson"
+            )
+
         @self.app.get("/get_model_providers/")
         def get_model_providers() -> list[str]:
+            """Return the configured model provider names.
+
+            :return: List of configured model provider names
+            """
             return self.MODEL_RETRIEVER.get_model_providers()
 
         @self.app.get("/get_models/")
         def get_models(model_provider: str) -> list[str]:
+            """Return available models for a provider or raise an HTTP error.
+
+            :param model_provider: The name of the model provider
+            :return: List of available models for the specified provider
+            """
             try:
                 return self.MODEL_RETRIEVER.get_models(model_provider)
             except KeyError as error:
@@ -106,7 +208,7 @@ class AiAgentOcrApp:
             """
             Retrieves a configuration from the database.
 
-            :param name: Name of the configuration to retrieve
+            :param config_name: Name of the configuration to retrieve
             :return: Configuration model
             """
             config_model_db = self.CONFIG_BUILDER.load_config_from_db(

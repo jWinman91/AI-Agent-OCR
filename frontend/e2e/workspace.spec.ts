@@ -3,6 +3,16 @@ import { expect, test } from '@playwright/test'
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname
+    if (path.includes('ollama/dependency-status'))
+      return route.fulfill({
+        json: {
+          ollama_reachable: true,
+          required_model: 'gemma4:latest',
+          model_installed: true,
+          ready: true,
+          error: null,
+        },
+      })
     if (path.includes('get_model_providers'))
       return route.fulfill({ json: ['openai', 'ollama'] })
     if (path.includes('get_models'))
@@ -46,6 +56,64 @@ test.beforeEach(async ({ page }) => {
       })
     return route.fulfill({ json: true })
   })
+})
+
+test('keeps the main workspace blocked until a missing model is confirmed and installed', async ({
+  page,
+}) => {
+  let statusChecks = 0
+  await page.route('**/api/ollama/dependency-status/', async (route) => {
+    statusChecks += 1
+    const installed = statusChecks > 1
+    await route.fulfill({
+      json: {
+        ollama_reachable: true,
+        required_model: 'gemma4:latest',
+        model_installed: installed,
+        ready: installed,
+        error: null,
+      },
+    })
+  })
+  await page.route('**/api/ollama/pull-model/', async (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/x-ndjson',
+      body: '{"status":"downloading","total":100,"completed":100}\n{"status":"success"}\n',
+    }),
+  )
+
+  await page.goto('/')
+  await expect(page.getByRole('dialog', { name: 'Download required model?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Agent configuration' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Download model' }).click()
+  await expect(page.getByRole('heading', { name: 'Agent configuration' })).toBeVisible()
+  expect(statusChecks).toBe(2)
+})
+
+test('leaves the workspace blocked when the user declines model installation', async ({ page }) => {
+  await page.route('**/api/ollama/dependency-status/', async (route) =>
+    route.fulfill({
+      json: {
+        ollama_reachable: true,
+        required_model: 'gemma4:latest',
+        model_installed: false,
+        ready: false,
+        error: null,
+      },
+    }),
+  )
+  const pulls: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('pull-model')) pulls.push(request.url())
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('dialog', { name: 'Download required model?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Not now' }).click()
+  await expect(page.getByRole('heading', { name: 'Preparing your workspace' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Agent configuration' })).toHaveCount(0)
+  expect(pulls).toHaveLength(0)
 })
 
 test('configuration, PDF upload, generated outputs and navigation retention', async ({ page }) => {

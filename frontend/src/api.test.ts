@@ -3,6 +3,56 @@ import { api, loadResult, outputPath } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 describe('backend contracts', () => {
+    it('validates Ollama dependency status', async () => {
+        const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+            ollama_reachable: true,
+            required_model: 'gemma4:latest',
+            model_installed: true,
+            ready: true,
+            error: null,
+        })))
+        vi.stubGlobal('fetch', fetch)
+        expect(await api.ollamaDependencyStatus()).toEqual({
+            ollama_reachable: true,
+            required_model: 'gemma4:latest',
+            model_installed: true,
+            ready: true,
+            error: null,
+        })
+        expect(fetch.mock.calls[0][0]).toBe('/api/ollama/dependency-status/')
+    })
+    it('parses progress records split across streamed chunks', async () => {
+        const chunks = [
+            '{"status":"downloading","total":100,"completed":2',
+            '0}\n{"status":"success"}\n',
+        ]
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                const encoder = new TextEncoder()
+                chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)))
+                controller.close()
+            },
+        })
+        const fetch = vi.fn().mockResolvedValue(new Response(body))
+        vi.stubGlobal('fetch', fetch)
+        const progress: unknown[] = []
+        await api.pullOllamaModel((record) => progress.push(record), new AbortController().signal)
+        expect(fetch.mock.calls[0][0]).toBe('/api/ollama/pull-model/')
+        expect(fetch.mock.calls[0][1].method).toBe('POST')
+        expect(progress).toEqual([
+            { status: 'downloading', total: 100, completed: 20 },
+            { status: 'success' },
+        ])
+    })
+    it('surfaces Ollama stream errors', async () => {
+        const fetch = vi.fn().mockResolvedValue(
+            new Response('{"error":"disk full"}\n'),
+        )
+        vi.stubGlobal('fetch', fetch)
+        await expect(
+            api.pullOllamaModel(vi.fn(), new AbortController().signal),
+        ).rejects.toThrow('disk full')
+    })
     it('discovers providers and models through the backend', async () => {
         const fetch = vi.fn()
             .mockResolvedValueOnce(new Response(JSON.stringify(['custom'])))

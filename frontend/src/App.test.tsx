@@ -8,6 +8,14 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
+      if (url.includes('ollama/dependency-status'))
+        return new Response(JSON.stringify({
+          ollama_reachable: true,
+          required_model: 'gemma4:latest',
+          model_installed: true,
+          ready: true,
+          error: null,
+        }))
       if (url.includes('get_config'))
         return new Response(
           JSON.stringify({
@@ -41,8 +49,173 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('runs analyser without uploads and keeps its generated table across navigation', async () => {
+async function renderReadyWorkspace() {
   render(<App />)
+  await screen.findByText('Backend connected')
+}
+
+it('keeps the workspace blocked when model installation is declined', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) => {
+      if (url.includes('ollama/dependency-status'))
+        return new Response(JSON.stringify({
+          ollama_reachable: true,
+          required_model: 'gemma4:latest',
+          model_installed: false,
+          ready: false,
+          error: null,
+        }))
+      return new Response('true')
+    }),
+  )
+  render(<App />)
+  expect(await screen.findByRole('dialog', { name: 'Download required model?' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+  expect(await screen.findByText(/needed before the workspace can open/)).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Agent configuration' })).not.toBeInTheDocument()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('pull-model'))).toBe(false)
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('update_agents'))).toBe(false)
+})
+
+it('streams model pull progress and opens the workspace after readiness is confirmed', async () => {
+  let progressController!: ReadableStreamDefaultController<Uint8Array>
+  const encoder = new TextEncoder()
+  const pullBody = new ReadableStream<Uint8Array>({
+    start(controller) {
+      progressController = controller
+    },
+  })
+  let statusChecks = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string) => {
+      const url = String(input)
+      if (url.includes('ollama/dependency-status')) {
+        statusChecks += 1
+        const installed = statusChecks > 1
+        return new Response(JSON.stringify({
+          ollama_reachable: true,
+          required_model: 'gemma4:latest',
+          model_installed: installed,
+          ready: installed,
+          error: null,
+        }))
+      }
+      if (url.includes('pull-model')) return new Response(pullBody)
+      if (url.includes('get_config'))
+        return new Response(JSON.stringify({
+          model: 'gemma4:latest',
+          model_provider: 'ollama',
+          system_prompt_user: 'Extract accurately.',
+        }))
+      if (url.includes('get_model_providers')) return new Response(JSON.stringify(['ollama']))
+      if (url.includes('get_models')) return new Response(JSON.stringify(['gemma4:latest']))
+      if (url.includes('update_agents')) return new Response('true')
+      return new Response('true')
+    }),
+  )
+
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Download model' }))
+  await act(async () => {
+    progressController.enqueue(
+      encoder.encode('{"status":"downloading layers","total":100,"completed":40}\n'),
+    )
+  })
+  expect(await screen.findByText('40%')).toBeInTheDocument()
+  await act(async () => {
+    progressController.enqueue(encoder.encode('{"status":"success"}\n'))
+    progressController.close()
+  })
+  expect(await screen.findByRole('heading', { name: 'Single agent' })).toBeInTheDocument()
+  expect(statusChecks).toBe(2)
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('update_agents'))).toBe(true)
+})
+
+it('shows pull errors and keeps the main workspace blocked', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string) => {
+      const url = String(input)
+      if (url.includes('ollama/dependency-status'))
+        return new Response(JSON.stringify({
+          ollama_reachable: true,
+          required_model: 'gemma4:latest',
+          model_installed: false,
+          ready: false,
+          error: null,
+        }))
+      if (url.includes('pull-model')) return new Response('{"error":"Disk full"}\n')
+      return new Response('true')
+    }),
+  )
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Download model' }))
+  expect(await screen.findByText('Disk full')).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Agent configuration' })).not.toBeInTheDocument()
+})
+
+it('keeps the workspace blocked when Ollama is unavailable and retries readiness', async () => {
+  let statusChecks = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string) => {
+      const url = String(input)
+      if (url.includes('ollama/dependency-status')) {
+        statusChecks += 1
+        const reachable = statusChecks > 1
+        return new Response(JSON.stringify({
+          ollama_reachable: reachable,
+          required_model: 'gemma4:latest',
+          model_installed: reachable,
+          ready: reachable,
+          error: reachable ? null : 'Cannot retrieve Ollama models. Check that Ollama is running.',
+        }))
+      }
+      return new Response('true')
+    }),
+  )
+  render(<App />)
+  expect(await screen.findByText(/Check that Ollama is running/)).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Single agent' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+  expect(await screen.findByRole('heading', { name: 'Single agent' })).toBeInTheDocument()
+  expect(statusChecks).toBe(2)
+})
+
+it('keeps the workspace blocked when a model download is cancelled', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('ollama/dependency-status'))
+        return new Response(JSON.stringify({
+          ollama_reachable: true,
+          required_model: 'gemma4:latest',
+          model_installed: false,
+          ready: false,
+          error: null,
+        }))
+      if (url.includes('pull-model'))
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          )
+        })
+      return new Response('true')
+    }),
+  )
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Download model' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel download' }))
+  expect(await screen.findByText('Model download canceled.')).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Single agent' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Download required model' })).toBeInTheDocument()
+})
+
+it('runs analyser without uploads and keeps its generated table across navigation', async () => {
+  await renderReadyWorkspace()
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Analyser' }), { button: 0, ctrlKey: false })
   fireEvent.click(screen.getByRole('tab', { name: 'Analyser' }))
   await waitFor(() =>
@@ -67,7 +240,7 @@ it('runs analyser without uploads and keeps its generated table across navigatio
 
 it('renders independent provider and model forms without manual model entry', async () => {
   window.history.replaceState({}, '', '/')
-  render(<App />)
+  await renderReadyWorkspace()
   expect(await screen.findByRole('heading', { name: 'Data extractor' })).toBeInTheDocument()
   await waitFor(() => expect(screen.getAllByLabelText('Model')).toHaveLength(2))
   expect(screen.queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument()
@@ -101,6 +274,14 @@ it('edits and saves bounded sampling settings for both Ollama agent forms', asyn
     'fetch',
     vi.fn(async (input: string, init?: RequestInit) => {
       const url = String(input)
+      if (url.includes('ollama/dependency-status'))
+        return new Response(JSON.stringify({
+          ollama_reachable: true,
+          required_model: 'gemma4:latest',
+          model_installed: true,
+          ready: true,
+          error: null,
+        }))
       if (url.includes('get_config'))
         return new Response(JSON.stringify({
           model: 'gemma4:latest',
@@ -120,7 +301,7 @@ it('edits and saves bounded sampling settings for both Ollama agent forms', asyn
     }),
   )
   window.history.replaceState({}, '', '/')
-  render(<App />)
+  await renderReadyWorkspace()
 
   await waitFor(() => expect(screen.getAllByLabelText('Provider')).toHaveLength(2))
   screen.getAllByLabelText('Provider').forEach((provider) =>
@@ -150,7 +331,7 @@ it('edits and saves bounded sampling settings for both Ollama agent forms', asyn
 })
 
 it('uploads documents only after resolution confirmation and supports cancelling and reselection', async () => {
-  render(<App />)
+  await renderReadyWorkspace()
   const picker = screen.getByLabelText('Choose documents')
   await waitFor(() => expect(picker).toBeEnabled())
   expect(screen.queryByRole('heading', { name: 'Results' })).not.toBeInTheDocument()
@@ -177,7 +358,7 @@ it('uploads documents only after resolution confirmation and supports cancelling
 })
 
 it('automatically uploads a selected dataset without a resolution dialog', async () => {
-  render(<App />)
+  await renderReadyWorkspace()
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Analyser' }), { button: 0 })
   const picker = await screen.findByLabelText('Choose a dataset')
   await waitFor(() => expect(picker).toBeEnabled())
@@ -207,7 +388,7 @@ it('keeps running feedback until results finish downloading and scrolls only onc
       return original(url, init)
     }),
   )
-  render(<App />)
+  await renderReadyWorkspace()
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Analyser' }), { button: 0 })
   fireEvent.change(await screen.findByLabelText('Analysis prompt'), {
     target: { value: 'Calculate totals' },
@@ -229,7 +410,7 @@ it('keeps running feedback until results finish downloading and scrolls only onc
 })
 
 it('releases a pending document choice on route change without sending an upload', async () => {
-  render(<App />)
+  await renderReadyWorkspace()
   const picker = screen.getByLabelText('Choose documents')
   await waitFor(() => expect(picker).toBeEnabled())
   fireEvent.change(picker, { target: { files: [new File(['pdf'], 'document.pdf')] } })
@@ -243,7 +424,7 @@ it('releases a pending document choice on route change without sending an upload
 })
 
 it('validates dropped batches and uploads dropped PDFs after confirmation', async () => {
-  render(<App />)
+  await renderReadyWorkspace()
   const picker = screen.getByLabelText('Choose documents')
   await waitFor(() => expect(picker).toBeEnabled())
   const dropzone = picker.closest('.dropzone')!
@@ -270,7 +451,7 @@ it('stops model feedback on failure and does not reveal or scroll to results', a
         : original(url, init),
     ),
   )
-  render(<App />)
+  await renderReadyWorkspace()
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Analyser' }), { button: 0 })
   fireEvent.change(await screen.findByLabelText('Analysis prompt'), {
     target: { value: 'Analyse' },

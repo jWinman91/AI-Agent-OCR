@@ -27,7 +27,14 @@ import {
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
-import type { AgentConfig, AgentName, ResultView, Workflow } from './api'
+import type {
+    AgentConfig,
+    AgentName,
+    OllamaDependencyStatus,
+    OllamaPullProgress,
+    ResultView,
+    Workflow,
+} from './api'
 import { AgentFailure, api, loadResult, message } from './api'
 import './App.css'
 
@@ -45,7 +52,11 @@ type Workspace = {
     activeWorkflow?: Workflow
     selectedAgent: Workflow
     selectAgent: (workflow: Workflow) => void
-    initializeError: string
+    startupState: 'checking' | 'needs-model' | 'declined' | 'installing' | 'error' | 'ready'
+    dependencyStatus?: OllamaDependencyStatus
+    startupError: string
+    pullProgress?: OllamaPullProgress
+    installDialogOpen: boolean
     ready: boolean
     states: Record<Workflow, RunState>
     update: (workflow: Workflow, patch: Partial<RunState>) => void
@@ -55,6 +66,10 @@ type Workspace = {
     activity: (label: string, workflow?: Workflow) => void
     present: (workflow: Workflow, result: ResultView) => boolean
     initialize: () => Promise<void>
+    installModel: () => Promise<void>
+    cancelInstall: () => void
+    openInstallDialog: () => void
+    closeInstallDialog: () => void
     consume: (workflow: Workflow) => void
 }
 const Context = createContext<Workspace | null>(null)
@@ -78,8 +93,13 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
     const [activeWorkflow, setActiveWorkflow] = useState<Workflow>()
     const [selectedAgent, selectAgent] = useState<Workflow>('extractor')
     const startup = useRef<Promise<void> | null>(null)
+    const pullController = useRef<AbortController | null>(null)
     const [ready, setReady] = useState(false)
-    const [initializeError, setInitializeError] = useState('')
+    const [startupState, setStartupState] = useState<Workspace['startupState']>('checking')
+    const [dependencyStatus, setDependencyStatus] = useState<OllamaDependencyStatus>()
+    const [startupError, setStartupError] = useState('')
+    const [pullProgress, setPullProgress] = useState<OllamaPullProgress>()
+    const [installDialogOpen, setInstallDialogOpen] = useState(false)
     const [states, setStates] = useState<Record<Workflow, RunState>>({
         pipeline: { prompt: '', uploaded: [] },
         extractor: { prompt: '', uploaded: [] },
@@ -140,20 +160,68 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
         return true
     }
     const initialize = async () => {
+        setReady(false)
+        setStartupState('checking')
+        setStartupError('')
         try {
+            const status = await api.ollamaDependencyStatus()
+            setDependencyStatus(status)
+            if (!status.ollama_reachable) {
+                throw new Error(status.error || 'Cannot reach Ollama. Check that it is running.')
+            }
+            if (!status.model_installed) {
+                setStartupState('needs-model')
+                setInstallDialogOpen(true)
+                return
+            }
+            if (!status.ready) throw new Error('Ollama dependencies are not ready.')
             await api.initialize()
             setReady(true)
-            setInitializeError('')
+            setStartupState('ready')
         } catch (error) {
             setReady(false)
-            setInitializeError(message(error))
+            setStartupState('error')
+            setStartupError(message(error))
         }
     }
+    const installModel = async () => {
+        const controller = new AbortController()
+        pullController.current = controller
+        setInstallDialogOpen(false)
+        setStartupState('installing')
+        setStartupError('')
+        setPullProgress(undefined)
+        try {
+            await api.pullOllamaModel(setPullProgress, controller.signal)
+            const status = await api.ollamaDependencyStatus()
+            setDependencyStatus(status)
+            if (!status.ready) {
+                throw new Error(status.error || `${status.required_model} is not installed yet.`)
+            }
+            await api.initialize()
+            setReady(true)
+            setStartupState('ready')
+        } catch (error) {
+            setReady(false)
+            if (controller.signal.aborted) {
+                setStartupState('needs-model')
+                setStartupError('Model download canceled.')
+            } else {
+                setStartupState('error')
+                setStartupError(message(error))
+            }
+        } finally {
+            if (pullController.current === controller) pullController.current = null
+        }
+    }
+    const cancelInstall = () => pullController.current?.abort()
+    const closeInstallDialog = () => {
+        setInstallDialogOpen(false)
+        setStartupState('declined')
+    }
     useEffect(() => {
-        startup.current ??= api.initialize()
+        startup.current ??= initialize()
         void startup.current
-            .then(() => setReady(true))
-            .catch((error) => setInitializeError(message(error)))
     }, [])
     return (
         <Context.Provider
@@ -163,8 +231,12 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
                 activeWorkflow,
                 selectedAgent,
                 selectAgent,
+                startupState,
+                dependencyStatus,
+                startupError,
+                pullProgress,
+                installDialogOpen,
                 ready,
-                initializeError,
                 states,
                 update,
                 operation,
@@ -173,6 +245,10 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
                 activity,
                 present,
                 initialize,
+                installModel,
+                cancelInstall,
+                openInstallDialog: () => setInstallDialogOpen(true),
+                closeInstallDialog,
                 consume,
             }}
         >
@@ -994,8 +1070,135 @@ function SingleAgent() {
         </>
     )
 }
+function InstallModelDialog() {
+    const dialog = useRef<HTMLDialogElement>(null)
+    const { dependencyStatus, installDialogOpen, closeInstallDialog, installModel } = useWorkspace()
+    useEffect(() => {
+        const node = dialog.current
+        if (installDialogOpen) node?.showModal()
+        else node?.close()
+        return () => node?.close()
+    }, [installDialogOpen])
+    return (
+        <dialog
+            ref={dialog}
+            className="dependency-dialog"
+            aria-labelledby="dependency-dialog-title"
+            onCancel={(event) => {
+                event.preventDefault()
+                closeInstallDialog()
+            }}
+        >
+            <div className="section-heading">
+                <h2 id="dependency-dialog-title">Download required model?</h2>
+                <button
+                    className="icon-button"
+                    aria-label="Close model download dialog"
+                    onClick={closeInstallDialog}
+                >
+                    <X size={18} />
+                </button>
+            </div>
+            <p>
+                {dependencyStatus?.required_model || 'The required Gemma 4 model'} is not installed.
+                Download it from Ollama to continue.
+            </p>
+            <div className="form-actions">
+                <button className="button secondary" onClick={closeInstallDialog}>
+                    Not now
+                </button>
+                <button className="button primary" onClick={() => void installModel()}>
+                    <ArrowDownToLine size={16} />
+                    Download model
+                </button>
+            </div>
+        </dialog>
+    )
+}
+function DependencyGate() {
+    const {
+        startupState,
+        dependencyStatus,
+        startupError,
+        pullProgress,
+        installDialogOpen,
+        initialize,
+        openInstallDialog,
+        cancelInstall,
+    } = useWorkspace()
+    const progress =
+        pullProgress?.total && pullProgress.completed !== undefined
+            ? Math.min(100, Math.floor((pullProgress.completed / pullProgress.total) * 100))
+            : undefined
+    return (
+        <div className="dependency-screen">
+            <main className="dependency-content">
+                <div className="brand-icon dependency-icon">
+                    <ScanLine size={24} />
+                </div>
+                <span className="eyebrow">AI Agent OCR</span>
+                <h1>Preparing your workspace</h1>
+                {startupState === 'checking' && (
+                    <div className="dependency-status" role="status">
+                        <LoaderCircle className="spin" size={18} />
+                        Checking Ollama and the required model
+                    </div>
+                )}
+                {(startupState === 'needs-model' || startupState === 'declined') && (
+                    <>
+                        {startupError && <Notice tone="warning">{startupError}</Notice>}
+                        <p>
+                            Ollama is connected, but {dependencyStatus?.required_model || 'the required model'}
+                            {' '}is needed before the workspace can open.
+                        </p>
+                        <button className="button primary" onClick={openInstallDialog}>
+                            <ArrowDownToLine size={16} />
+                            Download required model
+                        </button>
+                    </>
+                )}
+                {startupState === 'installing' && (
+                    <div className="dependency-install" role="status">
+                        <div className="dependency-status">
+                            <LoaderCircle className="spin" size={18} />
+                            <span>{pullProgress?.status || 'Connecting to Ollama'}</span>
+                            {progress !== undefined && <span>{progress}%</span>}
+                        </div>
+                        <progress
+                            className="dependency-progress"
+                            max="100"
+                            value={progress}
+                            aria-label="Model download progress"
+                        />
+                        {pullProgress?.total !== undefined && pullProgress.completed !== undefined && (
+                            <span className="dependency-detail">
+                                {(pullProgress.completed / 1_000_000_000).toFixed(2)} GB of{' '}
+                                {(pullProgress.total / 1_000_000_000).toFixed(2)} GB
+                            </span>
+                        )}
+                        <button className="button secondary" onClick={cancelInstall}>
+                            <X size={16} />
+                            Cancel download
+                        </button>
+                    </div>
+                )}
+                {startupState === 'error' && (
+                    <>
+                        <Notice>{startupError}</Notice>
+                        <button className="button secondary" onClick={() => void initialize()}>
+                            <RefreshCw size={16} />
+                            Check again
+                        </button>
+                    </>
+                )}
+                {installDialogOpen && <InstallModelDialog />}
+            </main>
+        </div>
+    )
+}
 function Shell() {
-    const { busy, ready, initializeError, initialize, operation } = useWorkspace()
+    const { busy, ready } = useWorkspace()
+    if (!ready) return <DependencyGate />
     return (
         <div className="app-shell">
             <aside className="sidebar">
@@ -1038,19 +1241,6 @@ function Shell() {
             </aside>
             <div className="main-area">
                 <main>
-                    {initializeError && (
-                        <Notice>
-                            {initializeError}
-                            <button
-                                className="button secondary"
-                                disabled={Boolean(busy)}
-                                onClick={() => void operation('Connecting to backend', initialize)}
-                            >
-                                <RefreshCw size={15} />
-                                Reconnect
-                            </button>
-                        </Notice>
-                    )}
                     <Routes>
                         <Route path="/" element={<Configuration />} />
                         <Route

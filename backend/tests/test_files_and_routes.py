@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import requests
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -33,6 +34,10 @@ class FileRoutes(unittest.TestCase):
         self.server = AiAgentOcrApp.__new__(AiAgentOcrApp)
         self.server.FILE_MANAGER = self.manager
         self.server.MODEL_RETRIEVER = ModelRetriever()
+        self.server.CONFIG_BUILDER = MagicMock()
+        self.server.CONFIG_BUILDER.load_config_from_db.return_value.model = (
+            "gemma4:latest"
+        )
         self.server.PREPROCESSOR = Preprocessor()
         self.server._image_urls = []
         self.server._text_file_urls = []
@@ -77,6 +82,90 @@ class FileRoutes(unittest.TestCase):
             ).status_code,
             404,
         )
+
+    def test_ollama_dependency_status_reports_required_model_state(self) -> None:
+        with patch.object(
+            self.server.MODEL_RETRIEVER,
+            "get_ollama_models",
+            return_value=["gemma4:latest"],
+        ):
+            response = self.client.get("/ollama/dependency-status/")
+        self.assertEqual(
+            response.json(),
+            {
+                "ollama_reachable": True,
+                "required_model": "gemma4:latest",
+                "model_installed": True,
+                "ready": True,
+                "error": None,
+            },
+        )
+
+        with patch.object(
+            self.server.MODEL_RETRIEVER,
+            "get_ollama_models",
+            return_value=[],
+        ):
+            response = self.client.get("/ollama/dependency-status/")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["model_installed"])
+        self.assertFalse(response.json()["ready"])
+
+        with patch.object(
+            self.server.MODEL_RETRIEVER,
+            "get_ollama_models",
+            side_effect=RuntimeError("Ollama is unavailable"),
+        ):
+            response = self.client.get("/ollama/dependency-status/")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["ollama_reachable"])
+        self.assertEqual(response.json()["error"], "Ollama is unavailable")
+
+    def test_ollama_model_pull_streams_progress_and_reports_connection_errors(
+        self,
+    ) -> None:
+        upstream = MagicMock()
+        upstream.iter_lines.return_value = [
+            b'{"status":"pulling manifest"}',
+            b'{"status":"success"}',
+        ]
+        with (
+            patch.dict(os.environ, {"OLLAMA_BASE_URL": "http://ollama:11434/v1/"}),
+            patch("app.requests.post", return_value=upstream) as post,
+        ):
+            response = self.client.post("/ollama/pull-model/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/x-ndjson", response.headers["content-type"])
+        self.assertEqual(
+            response.text,
+            '{"status":"pulling manifest"}\n{"status":"success"}\n',
+        )
+        post.assert_called_once_with(
+            "http://ollama:11434/api/pull",
+            json={"name": "gemma4:latest", "stream": True},
+            stream=True,
+            timeout=(3, 60),
+        )
+        upstream.close.assert_called_once()
+
+        with patch(
+            "app.requests.post", side_effect=requests.ConnectionError("offline")
+        ):
+            response = self.client.post("/ollama/pull-model/")
+        self.assertEqual(response.status_code, 502)
+
+        interrupted_stream = MagicMock()
+        interrupted_stream.iter_lines.side_effect = requests.ConnectionError(
+            "stream interrupted"
+        )
+        with patch("app.requests.post", return_value=interrupted_stream):
+            response = self.client.post("/ollama/pull-model/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(), {"error": "Ollama download failed: stream interrupted"}
+        )
+        interrupted_stream.close.assert_called_once()
 
     def test_model_retriever_takes_precedence_and_reports_failure(self) -> None:
         provider = self.server.MODEL_RETRIEVER.providers["ollama"]

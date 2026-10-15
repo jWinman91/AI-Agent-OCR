@@ -2,6 +2,20 @@ import Papa from 'papaparse'
 
 export type AgentName = 'data_extractor' | 'analyser'
 export type Workflow = 'pipeline' | 'extractor' | 'analyser'
+export type OllamaDependencyStatus = {
+  ollama_reachable: boolean
+  required_model: string
+  model_installed: boolean
+  ready: boolean
+  error: string | null
+}
+export type OllamaPullProgress = {
+  status?: string
+  digest?: string
+  total?: number
+  completed?: number
+  error?: string
+}
 export type AgentConfig = {
   model: string
   model_provider: string
@@ -78,8 +92,81 @@ async function catalog(path: string): Promise<string[]> {
     throw new Error('The backend returned an invalid model catalog.')
   return values
 }
+async function ollamaDependencyStatus(): Promise<OllamaDependencyStatus> {
+  const value = await json<unknown>('/api/ollama/dependency-status/')
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as OllamaDependencyStatus).ollama_reachable !== 'boolean' ||
+    typeof (value as OllamaDependencyStatus).required_model !== 'string' ||
+    typeof (value as OllamaDependencyStatus).model_installed !== 'boolean' ||
+    typeof (value as OllamaDependencyStatus).ready !== 'boolean' ||
+    !((value as OllamaDependencyStatus).error === null || typeof (value as OllamaDependencyStatus).error === 'string')
+  )
+    throw new Error('The backend returned an invalid Ollama dependency status.')
+  return value as OllamaDependencyStatus
+}
+async function pullOllamaModel(
+  onProgress: (progress: OllamaPullProgress) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch('/api/ollama/pull-model/', { method: 'POST', signal })
+  } catch (error) {
+    if (signal.aborted) throw error
+    if (error instanceof TypeError)
+      throw new Error('Cannot reach the service. Check the backend connection.')
+    throw error
+  }
+  if (!response.ok) {
+    const body = await response.text()
+    let detail = body
+    try {
+      detail = JSON.stringify(JSON.parse(body).detail ?? body)
+    } catch {
+      /* Plain HTTP errors remain readable. */
+    }
+    throw new Error(`Model download failed (${response.status}): ${detail.slice(0, 500)}`)
+  }
+  if (!response.body) throw new Error('The backend did not stream model download progress.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let succeeded = false
+  const consumeLine = (line: string) => {
+    if (!line.trim()) return
+    let progress: OllamaPullProgress
+    try {
+      progress = JSON.parse(line) as OllamaPullProgress
+    } catch {
+      throw new Error('The backend returned invalid model download progress.')
+    }
+    if (progress.error) throw new Error(progress.error)
+    onProgress(progress)
+    if (progress.status === 'success') succeeded = true
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      buffer += decoder.decode(value, { stream: !done })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      lines.forEach(consumeLine)
+      if (done) break
+    }
+    if (buffer.trim()) consumeLine(buffer)
+  } finally {
+    reader.releaseLock()
+  }
+  if (!succeeded) throw new Error('Ollama ended the download without confirming success.')
+}
 export const api = {
   initialize: () => confirmed('/api/update_agents/', { method: 'POST' }),
+  ollamaDependencyStatus,
+  pullOllamaModel,
   config: (agent: AgentName) => json<AgentConfig>(`/api/get_config/?config_name=${agent}`),
   save: async (agent: AgentName, config: AgentConfig) => {
     await confirmed(`/api/upload_config/?config_name=${agent}`, {
