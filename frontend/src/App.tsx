@@ -1053,7 +1053,7 @@ function SingleAgent() {
                     </Tabs.Trigger>
                 </Tabs.List>
                 <PageHeading
-                    title="Single agent"
+                    title={selectedAgent === 'extractor' ? 'Data extractor' : 'Analyser'}
                     subtitle={
                         selectedAgent === 'extractor'
                             ? 'Extract structured data from your documents'

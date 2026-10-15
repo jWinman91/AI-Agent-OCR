@@ -128,7 +128,7 @@ it('streams model pull progress and opens the workspace after readiness is confi
     progressController.enqueue(encoder.encode('{"status":"success"}\n'))
     progressController.close()
   })
-  expect(await screen.findByRole('heading', { name: 'Single agent' })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: 'Data extractor' })).toBeInTheDocument()
   expect(statusChecks).toBe(2)
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('update_agents'))).toBe(true)
 })
@@ -178,9 +178,10 @@ it('keeps the workspace blocked when Ollama is unavailable and retries readiness
   )
   render(<App />)
   expect(await screen.findByText(/Check that Ollama is running/)).toBeInTheDocument()
-  expect(screen.queryByRole('heading', { name: 'Single agent' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Data extractor' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Analyser' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
-  expect(await screen.findByRole('heading', { name: 'Single agent' })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: 'Data extractor' })).toBeInTheDocument()
   expect(statusChecks).toBe(2)
 })
 
@@ -210,7 +211,8 @@ it('keeps the workspace blocked when a model download is cancelled', async () =>
   fireEvent.click(await screen.findByRole('button', { name: 'Download model' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Cancel download' }))
   expect(await screen.findByText('Model download canceled.')).toBeInTheDocument()
-  expect(screen.queryByRole('heading', { name: 'Single agent' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Data extractor' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Analyser' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Download required model' })).toBeInTheDocument()
 })
 
@@ -218,6 +220,7 @@ it('runs analyser without uploads and keeps its generated table across navigatio
   await renderReadyWorkspace()
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Analyser' }), { button: 0, ctrlKey: false })
   fireEvent.click(screen.getByRole('tab', { name: 'Analyser' }))
+  expect(screen.getByRole('heading', { name: 'Analyser' })).toBeInTheDocument()
   await waitFor(() =>
     expect(
       screen.getByText('No dataset uploaded. External-data requests can use the downloader agent.'),

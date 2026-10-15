@@ -213,7 +213,7 @@ test('modern layout, automatic dataset upload, running feedback and split analys
   await page.goto('/single')
   const selector = await page.getByRole('tablist', { name: 'Agent mode' }).boundingBox()
   const heading = await page
-    .getByRole('heading', { name: 'Single agent', exact: true })
+    .getByRole('heading', { name: 'Data extractor', exact: true })
     .boundingBox()
   expect(selector!.y).toBeLessThan(heading!.y)
   await expect(page.getByText('Local workspace', { exact: true })).toHaveCount(0)
