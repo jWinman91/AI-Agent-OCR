@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from src.experiments import GROUND_TRUTH_DIR
+from src.extractor import EXTRACTED_DATA_DIR
 
 FieldValue = str | int | float | None
 FieldMetrics = dict[str, float | None]
@@ -34,8 +36,8 @@ class DataExtractorEvaluator:
 
     def __init__(
         self,
-        extracted_data_dir: Path = Path("extracted_data"),
-        ground_truth_data_dir: Path = Path("ground_truth"),
+        extracted_data_dir: Path = EXTRACTED_DATA_DIR,
+        ground_truth_data_dir: Path = GROUND_TRUTH_DIR,
     ) -> None:
         self._EXTRACTED_DATA_DIR = extracted_data_dir
         self._GROUND_TRUTH_DATA_DIR = ground_truth_data_dir

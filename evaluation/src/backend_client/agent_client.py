@@ -1,0 +1,127 @@
+"""Backend operations shared by the extractor and analyser evaluators: refreshing
+agents, uploading inputs, running a single agent, and downloading its outputs."""
+
+from pathlib import Path
+from typing import Any, Literal
+
+from fastapi import UploadFile
+from src.backend_client.request_be import BeRequest
+
+AgentName = Literal["data_extractor", "analyser"]
+
+
+class AgentClient:
+    def __init__(
+        self,
+        ip: str = "127.0.0.1",
+        port: int = 8000,
+        protocol: str = "http",
+    ) -> None:
+        self._be_request = BeRequest(ip=ip, port=port, protocol=protocol)
+
+    def update_agents(self) -> None:
+        """Rebuilds the backend agents from the current config, so the backend picks
+        up whatever config change the user made before starting a run."""
+        self._be_request.post("update_agents")
+
+    def upload_images(self, files: list[UploadFile]) -> None:
+        """Uploads images for the data extractor via /uploadimages.
+
+        Args:
+            files (list[UploadFile]): Image files to upload.
+        """
+        self._be_request.post("uploadimages", {"resize": "medium"}, files)
+
+    def upload_pdf(self, file: UploadFile) -> None:
+        """Uploads a single PDF for the data extractor via /uploadpdf; the backend
+        converts it into per-page images and texts itself.
+
+        Args:
+            file (UploadFile): PDF file to upload.
+        """
+        self._be_request.post("uploadpdf", {"resize": "medium"}, file)
+
+    def upload_data_file(self, file: UploadFile) -> None:
+        """Uploads a CSV/Excel dataset for the analyser via /uploaddatafile.
+
+        Args:
+            file (UploadFile): Data file to upload.
+        """
+        self._be_request.post("uploaddatafile", {}, file)
+
+    def run_single_agent(
+        self, agent_name: AgentName, user_prompt: str
+    ) -> dict[str, Any]:
+        """Runs one agent on the previously uploaded inputs via /run_single_agent.
+
+        The backend reports agent failures as a 200 response with error_message
+        set, so the returned result is not checked here - the caller decides
+        whether a failure aborts the run or is scored as a result.
+
+        Args:
+            agent_name (AgentName): The agent to run.
+            user_prompt (str): User prompt to guide the agent.
+        Returns:
+            dict[str, Any]: The agent result, e.g. data_file_path for the data
+            extractor or plot_path/df_file_path/python_code for the analyser,
+            plus error_message.
+        """
+        # Same route/payload shape as the frontend's single agent workflow.
+        result = self._be_request.post(
+            "run_single_agent",
+            {
+                "user_prompt": user_prompt,
+                "agent_name": agent_name,
+                "previous_error": None,
+            },
+            payload_type="data",
+        )
+        assert isinstance(result, dict)
+        return result
+
+    def get_config(self, agent_name: AgentName) -> dict[str, Any]:
+        """Gets an agent's configuration, including its full system prompt.
+
+        Args:
+            agent_name (AgentName): The agent to get the configuration for.
+        Returns:
+            dict[str, Any]: The agent configuration.
+        """
+        config = self._be_request.get(
+            path="get_config",
+            params={"config_name": agent_name, "full_prompt": "true"},
+            data_type=None,
+        )
+        assert isinstance(config, dict)
+        return config
+
+    def download_data(self, df_path: Path) -> bytes:
+        """Downloads a CSV produced by an agent via /df_path/.../download_data.
+
+        Args:
+            df_path (Path): Backend path of the data file.
+        Returns:
+            bytes: The raw CSV content.
+        """
+        content = self._be_request.get(
+            path=f"df_path/{df_path}/download_data", params=None, data_type="data"
+        )
+        assert isinstance(content, bytes)
+        return content
+
+    def download_plot(self, plot_path: Path) -> bytes:
+        """Downloads a plot produced by the analyser via
+        /plot_path/.../download_plot.
+
+        Args:
+            plot_path (Path): Backend path of the plot.
+        Returns:
+            bytes: The raw PNG content.
+        """
+        # data_type="data" returns the raw bytes, so the PNG can be written to
+        # disk or passed to a judge model without re-encoding.
+        content = self._be_request.get(
+            path=f"plot_path/{plot_path}/download_plot", params=None, data_type="data"
+        )
+        assert isinstance(content, bytes)
+        return content
