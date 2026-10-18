@@ -527,6 +527,10 @@ class AiAgentOcrApp:
 
 
 if __name__ == "__main__":
+    # All backend paths (config.db, configs/, data/, plots/, MCP servers) are
+    # relative to backend/, so run from there regardless of the caller's cwd.
+    os.chdir(Path(__file__).resolve().parent)
+
     arguments = [
         {
             "name_or_flags": "--ip",

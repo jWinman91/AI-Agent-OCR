@@ -1,4 +1,8 @@
-import '@fontsource-variable/public-sans'
+import '@fontsource/manrope/600.css'
+import '@fontsource/manrope/700.css'
+import '@fontsource/manrope/800.css'
+import '@fontsource/source-sans-3/400.css'
+import '@fontsource/source-sans-3/600.css'
 import * as Tabs from '@radix-ui/react-tabs'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
@@ -37,6 +41,8 @@ import type {
 } from './api'
 import { AgentFailure, api, loadResult, message } from './api'
 import './App.css'
+import isotype from './assets/brand/isotipo_color_fondo-claro.svg'
+import isotypeOnNavy from './assets/brand/isotipo_color_fondo-oscuro.svg'
 
 type RunState = {
     prompt: string
@@ -1133,8 +1139,9 @@ function DependencyGate() {
     return (
         <div className="dependency-screen">
             <main className="dependency-content">
-                <div className="brand-icon dependency-icon">
-                    <ScanLine size={24} />
+                <div className="brand dependency-brand">
+                    <img className="brand-mark" src={isotype} alt="" width={46} height={31} />
+                    <span className="wordmark">winmor</span>
                 </div>
                 <span className="eyebrow">AI Agent OCR</span>
                 <h1>Preparing your workspace</h1>
@@ -1201,44 +1208,42 @@ function Shell() {
     if (!ready) return <DependencyGate />
     return (
         <div className="app-shell">
-            <aside className="sidebar">
-                <NavLink to="/" className="brand">
-                    <div className="brand-icon">
-                        <ScanLine size={23} />
+            <header className="site-header">
+                <div className="header-bar">
+                    <NavLink to="/" className="brand" aria-label="winmor AI Agent OCR">
+                        <img className="brand-mark" src={isotype} alt="" width={46} height={31} />
+                        <span className="wordmark">winmor</span>
+                        <span className="product-name">AI Agent OCR</span>
+                    </NavLink>
+                    <nav aria-label="Workspace">
+                        <NavLink to="/" end>
+                            <Settings2 size={18} />
+                            Configure agents
+                        </NavLink>
+                        <NavLink to="/pipeline">
+                            <FileImage size={18} />
+                            Run AI Agent OCR
+                        </NavLink>
+                        <NavLink to="/single">
+                            <SlidersHorizontal size={18} />
+                            Run single agent
+                        </NavLink>
+                    </nav>
+                    <div className="backend-status">
+                        {busy ? (
+                            <>
+                                <LoaderCircle className="spin" size={15} />
+                                <span role="status">{busy}</span>
+                            </>
+                        ) : (
+                            <>
+                                <span className={`status-dot ${ready ? 'online' : ''}`} />
+                                {ready ? 'Backend connected' : 'Backend unavailable'}
+                            </>
+                        )}
                     </div>
-                    <span>
-                        AI Agent OCR<small>Document workspace</small>
-                    </span>
-                </NavLink>
-                <span className="nav-label">WORKSPACE</span>
-                <nav>
-                    <NavLink to="/" end>
-                        <Settings2 size={18} />
-                        Configure agents
-                    </NavLink>
-                    <NavLink to="/pipeline">
-                        <FileImage size={18} />
-                        Run AI Agent OCR
-                    </NavLink>
-                    <NavLink to="/single">
-                        <SlidersHorizontal size={18} />
-                        Run single agent
-                    </NavLink>
-                </nav>
-                <div className="sidebar-footer">
-                    {busy ? (
-                        <>
-                            <LoaderCircle className="spin" size={15} />
-                            <span role="status">{busy}</span>
-                        </>
-                    ) : (
-                        <>
-                            <span className={`status-dot ${ready ? 'online' : ''}`} />
-                            {ready ? 'Backend connected' : 'Backend unavailable'}
-                        </>
-                    )}
                 </div>
-            </aside>
+            </header>
             <div className="main-area">
                 <main>
                     <Routes>
@@ -1268,6 +1273,13 @@ function Shell() {
                     </Routes>
                 </main>
             </div>
+            <footer className="site-footer">
+                <span className="brand">
+                    <img className="brand-mark" src={isotypeOnNavy} alt="" width={34} height={23} />
+                    <span className="wordmark">winmor</span>
+                </span>
+                <span>AI built for your goals.</span>
+            </footer>
         </div>
     )
 }

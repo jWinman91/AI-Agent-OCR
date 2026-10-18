@@ -16,8 +16,8 @@ uv lock && uv sync
 # Run backend (FastAPI, port 8000)
 uv run python backend/app.py
 
-# Run frontend (Streamlit, port 8081)
-uv run streamlit run streamlit-app/main.py
+# Run frontend (Vite development server)
+cd frontend && npm run dev
 
 # Lint
 ruff check .
@@ -30,9 +30,9 @@ mypy backend/src --config-file mypy.ini
 
 **AI-Agent-OCR** is a multi-agent tool that extracts data from photos (e.g. bathroom scales, utility meters) and PDF documents, then turns the extracted readings into visualizations such as time series plots of body weight. Users upload images or PDFs → agents extract structured data → optional analysis/plotting. The system runs locally using Ollama (default) or OpenAI, with `pydantic_ai` as the agent framework used to call the models.
 
-### Two-process design
+### Application components
 - **Backend** (`backend/app.py`): FastAPI server that manages agents, files, and orchestration
-- **Frontend** (`streamlit-app/main.py`): Streamlit UI that calls the backend via HTTP
+- **Frontend** (`frontend/`): React and TypeScript UI that calls the backend via HTTP
 
 ### Agent pipeline
 
@@ -79,13 +79,10 @@ All agent response shapes and config models are in `backend/src/utils/data_model
 - `ruff.toml`: line-length 88, double quotes
 - `mypy.ini`: Python 3.11, strict mode, targets `backend/src`
 
-### Containerization
-A `Dockerfile` builds the app on `python:3.11-slim`, installs dependencies with `uv sync --frozen --no-dev`, and runs both the backend (port 8000) and the Streamlit frontend (port 8081) in one container. This is a first draft and still needs to be refined.
-
 ### Evaluation harness (`evaluate_extractor/`)
-A sibling directory (outside `backend/`/`streamlit-app/`) that evaluates `data_extractor` agent accuracy against hand-labeled ground truth, driven by `evaluate_extractor/evaluate_extractor.py` as a CLI tool.
+A sibling directory (outside `backend/` and `frontend/`) that evaluates `data_extractor` agent accuracy against hand-labeled ground truth, driven by `evaluate_extractor/evaluate_extractor.py` as a CLI tool.
 
-- `src/backend_client/` (`request_be.py`, `response_be.py`) is a thin HTTP client that drives the FastAPI backend the same way the Streamlit frontend does (upload files, run agents, fetch results), plus `ollama_retriever.py` for listing locally available Ollama models. Its file-upload `post()` overloads are typed against `fastapi.UploadFile` (not Streamlit's `UploadedFile`, since this client runs in a plain CLI context) and pass `(filename, file)` tuples to `requests`, because `UploadFile.read()` is async and can't be handed to `requests` directly.
+- `src/backend_client/` (`request_be.py`, `response_be.py`) is a thin HTTP client for uploading files, running agents, and fetching results from the FastAPI backend, plus `ollama_retriever.py` for listing locally available Ollama models. File uploads pass `(filename, file)` tuples to `requests`.
 - `src/extract_data.py`'s `DataExtractor` uploads test files (PDF-first routing: a single `.pdf` goes to `/uploadpdf`, otherwise all files go to `/uploadimages`), runs `/run_single_agent` with `agent_name=data_extractor`, and saves the resulting CSV to `extracted_data/{experiment_name}_{run_name}.csv`. The extracted CSV is the only output kept permanently on disk; the agent's config YAML (`save_config`) is written to a temp file (system temp dir) and returned to the caller so it can be logged as an MLflow artifact and then deleted. `evaluate.py`'s `save_false_values` works the same way (temp files, returned paths, caller deletes after upload).
 - `src/evaluate.py`'s `DataExtractorEvaluator` compares `extracted_data/{experiment_name}_{run_name}.csv` against `ground_truth/{experiment_name}.csv` (ground truth is `;`-separated). Matching is **per field**: each ground truth column (except the `image_url`/`timestamp` metadata columns) is scored independently. Extracted and ground truth values for one field are grouped by `image_url` (must match exactly) and bag-matched (unordered multiset) within each group, so order on the page doesn't matter and a correct value for one field still counts even if another field in that row was wrong. Column names are matched case-insensitively (e.g. ground truth `Saldo` ↔ extracted `SALDO`). Values are normalized before comparison via `_normalize_value`/`_parse_numeric`, which strips currency symbols (`€`/`$`/`£`) and handles both German/European (`"60.394,59 €"`) and US (`"1,234.56"`) thousands/decimal separator conventions so differently-formatted equal numbers still match.
 - `evaluate_extracted_data` returns `{"fields": {field_name: {accuracy, precision, recall, f1_score}, ...}, "overall": {...}}`: one metric set per ground truth field, plus a macro-averaged `"overall"` set. A ground truth field the extractor was never asked to produce (no matching extracted column) has all four metrics set to `None` and is excluded from the macro average; a field that was attempted but scored 0.0 is a real result and still counts toward the average. `save_false_values` writes a `{experiment_name}_{run_name}_false_{positives,negatives}.csv` pair (temp files) with **one row per (image_url, field) page that has a mismatch**: the false positives file has an `image_url, field, hallucinated_values` schema (extracted values not in that page's ground truth, as a list), and the false negatives file has `image_url, field, missed_values` (ground truth values for that page that were never extracted, as a list). Pages with no mismatch produce no row.

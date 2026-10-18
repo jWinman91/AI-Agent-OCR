@@ -1,7 +1,7 @@
 # AI Agent OCR Frontend
 
-React and TypeScript workspace for the existing FastAPI backend. Streamlit remains
-available separately. Provider and model discovery is handled by the backend.
+React and TypeScript workspace for the FastAPI backend. Provider and model discovery
+is handled by the backend.
 
 ## Development
 
@@ -49,9 +49,8 @@ A browser timeout does not cancel backend work; avoid submitting duplicate runs.
 - Upload markers are consumed after each run attempt. Results, prompts and retry
   errors remain in memory across navigation. Refreshing the browser resets that state.
 
-The backend uses shared upload state. This frontend serializes its operations,
-but running Streamlit or a second browser against the same backend concurrently
-can still replace another workflow's files. Use one active client at a time.
+The backend uses shared upload state. Multiple browser sessions connected to the same
+backend can replace another workflow's files. Use one active session at a time.
 
 ## Branding
 
@@ -79,6 +78,5 @@ not enabled and table behavior is covered by tests.
 
 `npm run build` generates static files in `dist/`. Serve these with SPA fallback
 to `index.html` and a reverse proxy for `/api/*` (strip `/api`).
-Configure long proxy timeouts for agent calls. Vite's development
-proxy is not bundled into the production build. Existing Docker/Streamlit startup
-is deliberately unchanged.
+Configure long proxy timeouts for agent calls. Vite's development proxy is not bundled
+into the production build.

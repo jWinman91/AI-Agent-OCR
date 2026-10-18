@@ -22,20 +22,14 @@ uv sync
 uv run python backend/app.py
 ```
 
-- Run the Streamlit app:
-
-```bash
-uv run streamlit run streamlit-app/main.py
-```
-
 Notes:
 - This project targets Python 3.11 (see `mypy.ini`).
 - Dependencies are declared in `pyproject.toml`; `requirements.txt` remains for reference.
 
 ## React frontend
 
-The new brandable React/TypeScript frontend lives in [frontend](frontend/README.md).
-Streamlit remains available. With the backend running, start the new UI:
+The brandable React/TypeScript frontend lives in [frontend](frontend/README.md).
+With the backend running, start the frontend:
 
 ```bash
 cd frontend
@@ -71,13 +65,11 @@ uv run --extra dev pre-commit run --all-files
 
 ## Frontend verification
 
-Run the frontend regression tests (mocked HTTP and Streamlit AppTest; no models required):
+Run the frontend regression tests (mocked HTTP; no models required):
 
 ```bash
-uv run python -m unittest discover -s streamlit-app/tests
+npm --prefix frontend test
 ```
 
-Agent requests have a 30-minute read timeout by default. Set
-`STREAMLIT_AGENT_READ_TIMEOUT_SECONDS` to a positive number before starting Streamlit
-to adjust it for slower local models. A frontend timeout does not cancel backend work;
-avoid immediately submitting the same request again.
+Agent requests have a 30-minute read timeout by default. A frontend timeout does not
+cancel backend work; avoid immediately submitting the same request again.
