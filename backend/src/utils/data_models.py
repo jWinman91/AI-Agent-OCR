@@ -29,7 +29,8 @@ class ConfigModelBase(BaseModel):
     """
 
     model: str
-    model_provider: Optional[str] = "openai"
+    model_provider: str = "openai"
+    api_key: Optional[str] = None
     output_type: Optional[bool] = False
     model_settings: dict[str, Any] = Field(default_factory=dict)
 
