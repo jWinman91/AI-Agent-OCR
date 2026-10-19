@@ -24,12 +24,24 @@ repos:
         language: system
         pass_filenames: false
         files: ^(backend/.*\.py|mypy\.ini|pyproject\.toml|uv\.lock)$
+      - id: mypy-evaluation
+        name: mypy (evaluation)
+        entry: uv run --extra dev mypy --config-file evaluation/mypy.ini evaluation/evaluate_analyser.py evaluation/evaluate_extractor.py evaluation/src evaluation/tests
+        language: system
+        pass_filenames: false
+        files: ^(evaluation/.*\.py|evaluation/mypy\.ini|pyproject\.toml|uv\.lock)$
       - id: backend-tests
         name: Backend tests
         entry: uv run --extra dev python -m unittest discover -s backend/tests
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^(backend/.*\.(py|yaml)|pyproject\.toml|uv\.lock)$
+      - id: evaluation-tests
+        name: Evaluation tests
+        entry: uv run --extra dev python -m unittest discover -s evaluation/tests -t evaluation
+        language: system
+        pass_filenames: false
+        files: ^(evaluation/.*\.(py|yaml)|pyproject\.toml|uv\.lock)$
       - id: react-frontend-build
         name: React frontend build
         entry: npm --prefix frontend run build

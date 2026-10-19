@@ -24,6 +24,7 @@ ruff check .
 
 # Type check
 mypy backend/src --config-file mypy.ini
+mypy --config-file evaluation/mypy.ini evaluation/evaluate_analyser.py evaluation/evaluate_extractor.py evaluation/src evaluation/tests
 ```
 
 ## Architecture
@@ -81,11 +82,20 @@ All agent response shapes and config models are in `backend/src/utils/data_model
 - `mypy.ini`: Python 3.11, strict mode, targets `backend/src`
 
 ### Evaluation harness (`evaluation/`)
-The `evaluation/` directory is separate from `backend/` and `frontend/`, with distinct entry points and source packages for the data extractor and analyser evaluations. The analyser evaluation is an empty scaffold for now; no analyser scoring or MLflow integration is implemented yet.
+The `evaluation/` directory is separate from `backend/` and `frontend/`, with distinct entry points and source packages for the data extractor and analyser evaluations.
 
-- `evaluate_extractor.py` is the existing data extractor evaluation CLI. Its extractor-specific implementation lives in `src/extractor/` (`evaluate.py` and `extract_data.py`). `src/experiments.py` holds everything shared by both evaluators: path constants, prompt loading, experiment discovery and readiness checks, the run-all loop that skips experiments with missing data, metric flattening and MLflow logging. `src/backend_client/agent_client.py`'s `AgentClient` wraps the backend calls both evaluators need (update agents, upload images/PDF/data file, run a single agent, get config, download data/plot) on top of the low-level `request_be.py`/`response_be.py`; it returns agent results unchecked, so each evaluator decides whether an `error_message` aborts the run.
-- `evaluate_analyser.py` is the analyser evaluation entry point, with its implementation package under `src/analyser/`.
-- Example: `python evaluate_extractor.py --experiment_name body_weight --run_name gemma4_v1`, or `--run_name` alone to run every extractor experiment. All paths are resolved relative to `evaluation/` (not the current working directory), so it can be started from anywhere.
-- Test data is split per agent so "run all" only picks up that agent's experiments: `test_data/extractor/{experiment}/` and `test_data/analyser/{experiment}/`, each agent with its own `prompt.yaml` keyed by experiment name. `ground_truth/` stays one shared directory (`ground_truth/{experiment}.*`). Extractor output goes to `extracted_data/`. `test_data/` and `extracted_data/` are gitignored.
-- Extractor evaluation compares extracted CSV data against hand-labeled ground truth. It matches field values per source image, normalizes numeric and currency values, reports classification metrics for multi-value fields and MAE for single-value fields, and writes mismatch CSVs as temporary files for MLflow artifacts.
-- Extractor metrics, params, and artifacts are logged to `sqlite:///mlflow.db`; run `mlflow ui --backend-store-uri sqlite:///mlflow.db` from `evaluation/` to view results.
+- `src/experiments.py` holds everything shared by both evaluators: path constants, prompt loading, experiment discovery (folders for the extractor, single files for the analyser), readiness checks, the run-all loop that skips experiments with missing data (`ExperimentDataMissing`), metric flattening and MLflow logging. `src/backend_client/agent_client.py`'s `AgentClient` wraps the backend calls both evaluators need (update agents, upload images/PDF/data file, run a single agent, get config, download data/plot) on top of the low-level `request_be.py`/`response_be.py`; it returns agent results unchecked, so each evaluator decides whether an `error_message` aborts the run.
+- All paths are resolved relative to `evaluation/` (not the current working directory), so the CLIs can be started from anywhere. Test data is split per agent: `eval_data/extractor/` and `eval_data/analyser/`, each with its own `prompt.yaml` keyed by experiment name. `ground_truth/` stays one shared directory.
+- MLflow logs to `evaluation/mlflow.db`, with artifacts of newly created experiments under `evaluation/mlruns/`; view with `mlflow ui --backend-store-uri sqlite:///mlflow.db` from `evaluation/`. MLflow experiment = experiment name (prefixed `analyser/` for the analyser, so it never collides with an extractor experiment of the same name), MLflow run = `--run_name`. Missing values are logged as NaN.
+- Tests: `uv run --extra dev python -m unittest discover -s evaluation/tests -t evaluation` (no backend or API key needed; judge calls use a pydantic_ai `FunctionModel`, MLflow a temp sqlite store).
+
+#### Extractor evaluation
+- `evaluate_extractor.py`, implementation in `src/extractor/` (`evaluate.py`, `extract_data.py`). Example: `python evaluate_extractor.py --experiment_name body_weight --run_name gemma4_v1`, or `--run_name` alone to run every extractor experiment.
+- Each experiment is a folder `eval_data/extractor/{experiment}/` of images/PDF, scored against `ground_truth/{experiment}.csv`. Output goes to `extracted_data/` (gitignored).
+- Compares extracted CSV data against hand-labeled ground truth: matches field values per source image, normalizes numeric and currency values, reports classification metrics for multi-value fields and MAE for single-value fields, and writes mismatch CSVs as temporary files for MLflow artifacts.
+
+#### Analyser evaluation (LLM-as-a-judge)
+- `evaluate_analyser.py`, implementation in `src/analyser/`: `experiment_spec.py` (prompt + ground truth lookup), `run_analyser.py` (upload data file → `/run_single_agent` → download plot/output data), `judge.py` (`LLMJudge`, pydantic_ai structured output), `judge_config.py` + `judge_config.yaml` (judge model, prompts, 1–5 rubrics), `evaluate.py` (`AnalyserEvaluator`, gating + metrics).
+- Each data file `eval_data/analyser/{experiment}.csv|.xlsx|.xls` is one experiment (name = file stem); the files may be symlinks into `ground_truth/`. Its `prompt.yaml` entry is either the prompt string or `{prompt: ..., ground_truth: <file in ground_truth/>}`. A named ground truth must exist and is a `.png` reference plot or a `.csv` expected output; it is shown to the judge as a reference.
+- Metrics: `execution_success` (1/0 from the backend's `error_message`; the code is never re-executed), `code_simplicity` (judged whenever code exists, even on failure), and `data_correctness`, `task_relevance`, `chart_suitability`, `completeness`, `readability` (judged only when execution succeeded and a plot exists, otherwise NaN). The visualisation judge sees the plot, request, input data and reference but deliberately not the code. A failing judge call leaves its scores NaN and sets a `judge_error` tag instead of aborting.
+- The judge (`openai:gpt-6.1-sol` by default) needs `OPENAI_API_KEY` in the environment; the CLI checks the key and makes one preflight call before running the analyser. Params include `judge_config_sha`, so only compare scores between runs judged with the same `judge_config.yaml`. Artifacts: plot, output data, code, code summary, `judge_results.json` (explanations/evidence), errors and both configs.
