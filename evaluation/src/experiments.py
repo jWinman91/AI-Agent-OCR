@@ -20,7 +20,7 @@ import yaml
 from loguru import logger
 
 EVALUATION_DIR = Path(__file__).resolve().parent.parent
-TEST_DATA_DIR = EVALUATION_DIR / "test_data"
+TEST_DATA_DIR = EVALUATION_DIR / "eval_data"
 # Shared by both evaluators: ground_truth/{experiment_name}.* holds whatever
 # reference an experiment is scored against.
 GROUND_TRUTH_DIR = EVALUATION_DIR / "ground_truth"

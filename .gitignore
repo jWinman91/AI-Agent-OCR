@@ -9,6 +9,10 @@ __pycache__/
 # sqlite db
 *.db
 
+# Evaluation data
+*.pdf
+*.png
+
 # MLflow local artifact store
 mlruns/
 extracted_data/
