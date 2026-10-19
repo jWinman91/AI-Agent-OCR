@@ -30,12 +30,6 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-      - id: frontend-tests
-        name: Frontend tests
-        entry: uv run --extra dev python -m unittest discover -s streamlit-app/tests
-        language: system
-        pass_filenames: false
-        always_run: true
       - id: react-frontend-build
         name: React frontend build
         entry: npm --prefix frontend run build

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import yaml
 from fastapi import UploadFile
-from src.backend_client.request_be import BeRequest
-from src.backend_client.response_be import BeResponse
+from src.backend_client.agent_client import AgentClient
+from src.extractor import EXTRACTED_DATA_DIR, EXTRACTOR_TEST_DATA_DIR
 
 UPLOADABLE_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
 
@@ -18,19 +18,19 @@ class DataExtractor:
         ip: str = "127.0.0.1",
         port: int = 8000,
         protocol: str = "http",
-        extracted_data_dir: Path = Path("extracted_data"),
-        test_data_dir: Path = Path("test_data"),
+        extracted_data_dir: Path = EXTRACTED_DATA_DIR,
+        test_data_dir: Path = EXTRACTOR_TEST_DATA_DIR,
     ) -> None:
-        self._be_request = BeRequest(ip=ip, port=port, protocol=protocol)
+        self._client = AgentClient(ip=ip, port=port, protocol=protocol)
 
         # update agents
-        self._be_request.post("update_agents")
+        self._client.update_agents()
 
         # some directories as constants
         self._EXTRACTED_DATA_DIR = extracted_data_dir
         self._TEST_DATA_DIR = test_data_dir
 
-    def load_files(self, experiment_name: Path) -> list[UploadFile]:
+    def load_files(self, experiment_name: str) -> list[UploadFile]:
         """Loads all files from the directory inside TEST_DATA_DIR and returns a list of
           UploadFile objects.
 
@@ -38,7 +38,7 @@ class DataExtractor:
         for each file. The files can then be sent to the backend for processing.
 
         Args:
-            experiment_name (Path): Name of the experiment containing the files to load.
+            experiment_name (str): Name of the experiment containing the files to load.
         Returns:
             list[UploadFile]: List of UploadFile objects containing the loaded data.
 
@@ -51,17 +51,15 @@ class DataExtractor:
                 upload_files.append(upload_file)
         return upload_files
 
-    def upload_files(self, files: list[UploadFile]) -> BeResponse:
+    def upload_files(self, files: list[UploadFile]) -> None:
         """Uploads the given list of UploadFile objects to the backend.
 
         It uses the BeRequest class to send a POST request to the backend with the
         files. The files are either send to /uploadimages or /uploadpdf depending on the
-        file type. The backend will then process the files and return a response.
+        file type. The backend will then process the files.
 
         Args:
             files (list[UploadFile]): List of UploadFile objects to upload.
-        Returns:
-            BeResponse: Response from the backend after uploading the files.
         """
         # load_files() globs the whole experiment folder, which can also contain
         # OS junk (.DS_Store) - only forward real data files.
@@ -90,17 +88,9 @@ class DataExtractor:
                         "Only one PDF file can be uploaded at a time, "
                         f"found {len(uploadable_files)} files."
                     )
-                return self._be_request.post(
-                    "uploadpdf",
-                    {"resize": "medium"},
-                    uploadable_files[0],
-                )
-
-            return self._be_request.post(
-                "uploadimages",
-                {"resize": "medium"},
-                uploadable_files,
-            )
+                self._client.upload_pdf(uploadable_files[0])
+            else:
+                self._client.upload_images(uploadable_files)
         finally:
             # Always release the open file handles from load_files(), whether
             # the upload succeeded or raised.
@@ -122,18 +112,9 @@ class DataExtractor:
         Returns:
             Path: Path to the extracted data file.
         """
-        # Same route/payload shape as the Streamlit "Run Data Extractor Agent"
-        # button (streamlit-app/src/run_single_agent.py).
-        response_json = self._be_request.post(
-            "run_single_agent",
-            {
-                "user_prompt": user_prompt,
-                "agent_name": "data_extractor",
-                "previous_error": None,
-            },
-            payload_type="data",
-        )
+        response_json = self._client.run_single_agent("data_extractor", user_prompt)
 
+        # An extraction failure leaves nothing to evaluate, so it aborts the run.
         if response_json.get("error_message"):
             raise RuntimeError(response_json["error_message"])
 
@@ -167,13 +148,7 @@ class DataExtractor:
             run_name (str): Name of the run. Used to create a unique name for the saved
             file.
         """
-        # Same download route the Streamlit app uses (parent_run.py's _get_csv),
-        # but written straight to disk instead of parsed into a DataFrame.
-        csv_bytes = self._be_request.get(
-            path=f"df_path/{data_file_path}/download_data",
-            params=None,
-            data_type="data",
-        )
+        csv_bytes = self._client.download_data(data_file_path)
 
         self._EXTRACTED_DATA_DIR.mkdir(parents=True, exist_ok=True)
         output_path = self._EXTRACTED_DATA_DIR / f"{experiment_name}_{run_name}.csv"
@@ -201,14 +176,7 @@ class DataExtractor:
         Returns:
             Path: Path to the saved config yaml file under the system temp directory.
         """
-        config = self._be_request.get(
-            path="get_config",
-            params={
-                "config_name": "data_extractor",
-                "full_prompt": "true",
-            },
-            data_type=None,
-        )
+        config = self._client.get_config("data_extractor")
 
         output_path = (
             Path(tempfile.gettempdir()) / f"{experiment_name}_{run_name}_config.yaml"

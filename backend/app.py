@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import List, Literal
@@ -17,8 +18,16 @@ from src.model_retriever import ModelRetriever
 from src.preprocessor import Preprocessor
 from src.utils.data_models import (
     AgentResult,
+    ConfigModelDB,
     ConfigModelUser,
 )
+
+
+def _set_provider_api_keys(configs: list[ConfigModelDB]) -> None:
+    for config in configs:
+        if config.api_key:
+            env_provider = re.sub(r"[^A-Z0-9]", "_", config.model_provider.upper())
+            os.environ[f"{env_provider}_API_KEY"] = config.api_key
 
 
 class AiAgentOcrApp:
@@ -55,6 +64,8 @@ class AiAgentOcrApp:
 
         self.CONFIG_BUILDER = ConfigBuilder(agent_config_path)
         self.MODEL_RETRIEVER = ModelRetriever(model_config_path)
+        agent_configs = self.CONFIG_BUILDER.load_all_configs_from_db()
+        _set_provider_api_keys(list(agent_configs.values()))
         self.FILE_MANAGER = FileManager(
             data_dir=data_dir,
             plot_dir=output_dir,
@@ -198,9 +209,13 @@ class AiAgentOcrApp:
             :param config: Configuration model to upload
             :return: True if successful
             """
-            return self.CONFIG_BUILDER.update_config_in_db(config_name, config)
+            updated = self.CONFIG_BUILDER.update_config_in_db(config_name, config)
+            if updated:
+                saved_config = self.CONFIG_BUILDER.load_config_from_db(config_name)
+                _set_provider_api_keys([saved_config])
+            return updated
 
-        @self.app.get("/get_config/")
+        @self.app.get("/get_config/", response_model_exclude={"api_key"})
         async def get_config(
             config_name: Literal["data_extractor", "analyser"],
             full_prompt: bool = False,
@@ -217,7 +232,10 @@ class AiAgentOcrApp:
             )
             return ConfigModelUser(**config_model_db.model_dump())
 
-        @self.app.get("/get_all_configs")
+        @self.app.get(
+            "/get_all_configs",
+            response_model_exclude={"__all__": {"api_key"}},
+        )
         async def get_all_configs() -> dict[str, ConfigModelUser]:
             """
             Retrieves all configurations from the database.
@@ -242,18 +260,6 @@ class AiAgentOcrApp:
             :return: True if successful
             """
             return self.CONFIG_BUILDER.reset_config_db(config_name)
-
-        @self.app.post("/set_openai_api_key/")
-        async def set_openai_api_key(api_key: str) -> bool:
-            """
-            Sets the OpenAI API key in the configuration.
-
-            :param api_key: The OpenAI API key
-            :return: True if successful
-            """
-            # set api key in environment variable
-            os.environ["OPENAI_API_KEY"] = api_key
-            return True
 
         @self.app.post("/update_agents/")
         async def update_agents() -> bool:
@@ -521,6 +527,10 @@ class AiAgentOcrApp:
 
 
 if __name__ == "__main__":
+    # All backend paths (config.db, configs/, data/, plots/, MCP servers) are
+    # relative to backend/, so run from there regardless of the caller's cwd.
+    os.chdir(Path(__file__).resolve().parent)
+
     arguments = [
         {
             "name_or_flags": "--ip",

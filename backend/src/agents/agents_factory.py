@@ -82,6 +82,7 @@ class AgentsFactory:
             exclude={
                 "model",
                 "model_provider",
+                "api_key",
                 "output_type",
                 "model_settings",
             }
