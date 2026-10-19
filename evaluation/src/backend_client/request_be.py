@@ -1,9 +1,10 @@
-from typing import Any, List, Literal
+from typing import Any, List, Literal, cast
 
 import requests
 from fastapi import UploadFile
 from loguru import logger
 from multipledispatch import dispatch
+from PIL import Image
 from src.backend_client.response_be import BeResponse
 
 
@@ -25,7 +26,7 @@ class BeRequest:
 
     def raise_error(
         self,
-        request_type: Literal["post", "get"],
+        request_type: Literal["POST", "GET"],
         response: BeResponse,
     ) -> BeResponse:
         """
@@ -46,7 +47,7 @@ class BeRequest:
         path: str,
         params: dict[str, str] | None = None,
         data_type: Literal["data", "image"] | None = None,
-    ) -> bytes | dict[str, Any] | bool:
+    ) -> bytes | Image.Image | dict[str, Any] | bool:
         """
         Sends a GET request to the backend server.
 
@@ -69,7 +70,7 @@ class BeRequest:
         elif data_type == "image":
             return BeResponse(response=response).image_bytes()
         else:
-            return BeResponse(response=response).json()
+            return cast(dict[str, Any] | bool, BeResponse(response=response).json())
 
     @dispatch(str)
     def post(
@@ -85,11 +86,11 @@ class BeRequest:
         logger.info(f"Sending POST request to {self._url}/{path} without params.")
 
         response = requests.post(f"{self._url}/{path}")
-        response = self.raise_error("POST", BeResponse(response=response))
+        be_response = self.raise_error("POST", BeResponse(response=response))
 
-        return response.json()
+        return cast(dict[str, Any] | bool, be_response.json())
 
-    @dispatch(str, dict)
+    @dispatch(str, dict)  # type: ignore[no-redef]
     def post(
         self,
         path: str,
@@ -115,11 +116,11 @@ class BeRequest:
         else:
             raise ValueError(f"Invalid payload_type: {payload_type}")
 
-        response = self.raise_error("POST", BeResponse(response=response))
+        be_response = self.raise_error("POST", BeResponse(response=response))
 
-        return response.json()
+        return cast(dict[str, Any] | bool, be_response.json())
 
-    @dispatch(str, str, dict)
+    @dispatch(str, str, dict)  # type: ignore[no-redef]
     def post(
         self,
         path: str,
@@ -140,15 +141,17 @@ class BeRequest:
             f"{self._url}/{path}", params={"config_name": config_name}, json=config
         )
 
-        return self.raise_error("POST", BeResponse(response))
+        return cast(
+            dict[str, Any], self.raise_error("POST", BeResponse(response)).json()
+        )
 
-    @dispatch(str, dict, list)
+    @dispatch(str, dict, list)  # type: ignore[no-redef]
     def post(
         self,
         path: str,
         params: dict[str, str],
         data_files: List[UploadFile],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Sends a POST request to the backend with a user prompt and a data file.
 
@@ -177,15 +180,17 @@ class BeRequest:
         else:
             response = requests.post(f"{self._url}/{path}", files=files)
 
-        return self.raise_error("POST", BeResponse(response)).json()
+        return cast(
+            dict[str, Any], self.raise_error("POST", BeResponse(response)).json()
+        )
 
-    @dispatch(str, dict, UploadFile)
+    @dispatch(str, dict, UploadFile)  # type: ignore[no-redef]
     def post(
         self,
         path: str,
         params: dict[str, str],
         data_file: UploadFile,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Sends a POST request to the backend with a user prompt and a data file.
 
@@ -206,4 +211,6 @@ class BeRequest:
         else:
             response = requests.post(f"{self._url}/{path}", files=files)
 
-        return self.raise_error("POST", BeResponse(response)).json()
+        return cast(
+            dict[str, Any], self.raise_error("POST", BeResponse(response)).json()
+        )

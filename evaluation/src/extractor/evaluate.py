@@ -513,9 +513,9 @@ class DataExtractorEvaluator:
         overall: dict[str, float | None] = {}
         for metric_name in ALL_OVERALL_METRIC_NAMES:
             values = [
-                metrics[metric_name]
+                value
                 for metrics in field_metrics.values()
-                if metrics.get(metric_name) is not None
+                if (value := metrics.get(metric_name)) is not None
             ]
             overall[metric_name] = sum(values) / len(values) if values else None
 

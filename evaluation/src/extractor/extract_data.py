@@ -66,7 +66,8 @@ class DataExtractor:
         uploadable_files = [
             file
             for file in files
-            if Path(file.filename).suffix.lower() in UPLOADABLE_SUFFIXES
+            # A file without a name has no suffix, so it is skipped too.
+            if Path(file.filename or "").suffix.lower() in UPLOADABLE_SUFFIXES
         ]
         skipped_files = [file for file in files if file not in uploadable_files]
         for file in skipped_files:
@@ -80,7 +81,8 @@ class DataExtractor:
             # converts it into per-page images itself); anything else is a set
             # of already-rendered images that goes straight to /uploadimages.
             is_pdf = [
-                file.filename.lower().endswith(".pdf") for file in uploadable_files
+                (file.filename or "").lower().endswith(".pdf")
+                for file in uploadable_files
             ]
             if any(is_pdf):
                 if len(uploadable_files) > 1:

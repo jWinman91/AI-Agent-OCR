@@ -1,17 +1,19 @@
 """Shared experiment helpers for the extractor and analyser evaluators.
 
-An experiment is a subdirectory of an agent's test data directory (e.g.
-test_data/extractor/body_weight/) holding the test files, with its user prompt
-stored under the experiment's key in that directory's shared prompt.yaml. Each
-experiment run is logged to MLflow with a 1:1 mapping: MLflow experiment =
-experiment_name, MLflow run = run_name.
+An experiment is either a subdirectory of an agent's test data directory
+holding the test files (extractor, e.g. eval_data/extractor/body_weight/) or a
+single input file in it (analyser, e.g. eval_data/analyser/body_weight.csv), with
+its user prompt stored under the experiment's key in that directory's shared
+prompt.yaml. Each experiment run is logged to MLflow with a 1:1 mapping: MLflow
+experiment = experiment_name (prefixed with "analyser/" for the analyser), MLflow
+run = run_name.
 
 All paths are resolved relative to the evaluation/ directory, so the CLIs work
 regardless of the directory they are started from.
 """
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,9 @@ TEST_DATA_DIR = EVALUATION_DIR / "eval_data"
 # reference an experiment is scored against.
 GROUND_TRUTH_DIR = EVALUATION_DIR / "ground_truth"
 MLFLOW_DB_PATH = EVALUATION_DIR / "mlflow.db"
+# With a sqlite tracking store, MLflow would otherwise put new experiments'
+# artifacts into ./mlruns of whatever directory the CLI was started from.
+MLFLOW_ARTIFACT_DIR = EVALUATION_DIR / "mlruns"
 PROMPT_FILE_NAME = "prompt.yaml"
 
 
@@ -39,16 +44,63 @@ def configure_mlflow() -> None:
     logger.info(f"MLflow tracking URI set to {mlflow.get_tracking_uri()}")
 
 
+def _set_mlflow_experiment(mlflow_experiment_name: str) -> None:
+    """Activates an MLflow experiment, creating it with its artifacts stored
+    under evaluation/mlruns/ on first use, so runs started from any directory
+    keep their artifacts in one place. Existing experiments keep the artifact
+    location they were created with.
+    """
+    if mlflow.get_experiment_by_name(mlflow_experiment_name) is None:
+        mlflow.create_experiment(
+            mlflow_experiment_name,
+            artifact_location=(MLFLOW_ARTIFACT_DIR / mlflow_experiment_name).as_uri(),
+        )
+    mlflow.set_experiment(mlflow_experiment_name)
+
+
 def discover_experiment_names(test_data_dir: Path) -> list[str]:
     """Lists every experiment subdirectory under an agent's test data directory.
 
     Args:
         test_data_dir (Path): The agent's test data directory, e.g.
-            test_data/extractor/.
+            eval_data/extractor/.
     Returns:
         list[str]: Sorted experiment names (subdirectory names).
     """
     return sorted(path.name for path in test_data_dir.iterdir() if path.is_dir())
+
+
+def discover_experiment_files(
+    test_data_dir: Path, suffixes: tuple[str, ...]
+) -> dict[str, Path]:
+    """Lists every experiment input file directly under an agent's test data
+    directory, for agents whose experiments are single files rather than
+    subdirectories (e.g. one data file per analyser experiment).
+
+    Args:
+        test_data_dir (Path): The agent's test data directory, e.g.
+            eval_data/analyser/.
+        suffixes (tuple[str, ...]): Lower-case file suffixes that count as
+            experiment inputs (e.g. (".csv", ".xlsx")); anything else, such as
+            prompt.yaml, is ignored.
+    Returns:
+        dict[str, Path]: Experiment name (file stem) -> input file, sorted by
+        name.
+    Raises:
+        ValueError: If two input files share a stem (e.g. a.csv and a.xlsx),
+            since the experiment name would be ambiguous.
+    """
+    files: dict[str, Path] = {}
+    for path in sorted(test_data_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in suffixes:
+            continue
+        if path.stem in files:
+            raise ValueError(
+                f"Experiment name '{path.stem}' is ambiguous: both "
+                f"{files[path.stem].name} and {path.name} exist in {test_data_dir}."
+            )
+        files[path.stem] = path
+    return files
 
 
 def load_user_prompt(test_data_dir: Path, experiment_name: str) -> str:
@@ -159,46 +211,57 @@ def flatten_metrics(metrics: dict[str, Any]) -> dict[str, float]:
 
 
 def log_run_to_mlflow(
-    experiment_name: str,
+    mlflow_experiment_name: str,
     run_name: str,
     params: dict[str, Any],
-    metrics: dict[str, Any],
+    metrics: Mapping[str, float | None],
     artifact_paths: list[Path],
+    tags: dict[str, str] | None = None,
 ) -> None:
-    """Logs one experiment run's params, metrics, and output files to MLflow.
+    """Logs one experiment run's params, metrics, tags, and output files to
+    MLflow.
 
     Args:
-        experiment_name (str): Name of the experiment; mapped 1:1 to an MLflow
-            experiment of the same name.
+        mlflow_experiment_name (str): MLflow experiment to log to - the
+            experiment name itself for the extractor, prefixed for the analyser
+            (see mlflow_experiment_name).
         run_name (str): Name of this run; mapped 1:1 to an MLflow run of the
             same name, nested under the MLflow experiment above.
         params (dict[str, Any]): Run params (prompt, model, ...) to log.
-        metrics (dict[str, Any]): Nested metrics dict, flattened with
-            flatten_metrics before logging.
+        metrics (Mapping[str, float | None]): Flat metric name -> value dict (see
+            flatten_metrics for nested metrics); None is logged as NaN.
         artifact_paths (list[Path]): Output files to attach as artifacts.
+        tags (dict[str, str] | None): Optional run tags, e.g. error messages.
     """
-    # set_experiment creates the MLflow experiment on first use and reuses it on
-    # every later call with the same name, so repeated runs of the same
-    # experiment_name accumulate as multiple runs under one MLflow experiment.
-    mlflow.set_experiment(experiment_name)
+    # The MLflow experiment is created on first use and reused on every later
+    # call with the same name, so repeated runs of the same experiment
+    # accumulate as multiple runs under one MLflow experiment.
+    _set_mlflow_experiment(mlflow_experiment_name)
     with mlflow.start_run(run_name=run_name) as run:
         logger.info(
-            f"Logging to MLflow: experiment '{experiment_name}', run '{run_name}' "
-            f"(run_id={run.info.run_id})..."
+            f"Logging to MLflow: experiment '{mlflow_experiment_name}', "
+            f"run '{run_name}' (run_id={run.info.run_id})..."
         )
         mlflow.log_params(params)
-        mlflow.log_metrics(flatten_metrics(metrics))
-        logger.info("Logged params and metrics to MLflow.")
+        mlflow.log_metrics(
+            {
+                name: math.nan if value is None else value
+                for name, value in metrics.items()
+            }
+        )
+        if tags:
+            mlflow.set_tags(tags)
+        logger.info("Logged params, metrics and tags to MLflow.")
         for artifact_path in artifact_paths:
             mlflow.log_artifact(str(artifact_path))
         logger.info(f"Logged {len(artifact_paths)} artifact(s) to MLflow.")
 
 
 def log_skipped_to_mlflow(
-    experiment_name: str,
+    mlflow_experiment_name: str,
     run_name: str,
     reason: str,
-    overall_metric_names: list[str],
+    metric_names: list[str],
 ) -> None:
     """Logs a skipped experiment to MLflow with NaN metrics in place of real ones.
 
@@ -207,57 +270,65 @@ def log_skipped_to_mlflow(
     to log - only a record that this run was attempted and why it was skipped.
 
     Args:
-        experiment_name (str): Name of the experiment; mapped 1:1 to an MLflow
-            experiment of the same name.
+        mlflow_experiment_name (str): MLflow experiment to log to.
         run_name (str): Name of this run; mapped 1:1 to an MLflow run of the
             same name, nested under the MLflow experiment above.
         reason (str): Human-readable reason the experiment was skipped, logged
             as a tag so it's visible in the MLflow UI.
-        overall_metric_names (list[str]): Every metric name the evaluator can
-            report in its "overall" summary.
+        metric_names (list[str]): Every summary metric name the evaluator can
+            report, logged as NaN.
     """
-    mlflow.set_experiment(experiment_name)
+    _set_mlflow_experiment(mlflow_experiment_name)
     with mlflow.start_run(run_name=run_name) as run:
         logger.info(
-            f"Logging skipped experiment to MLflow: experiment '{experiment_name}', "
-            f"run '{run_name}' (run_id={run.info.run_id})..."
+            "Logging skipped experiment to MLflow: experiment "
+            f"'{mlflow_experiment_name}', run '{run_name}' "
+            f"(run_id={run.info.run_id})..."
         )
         mlflow.set_tag("skipped_reason", reason)
-        # Nothing was evaluated, so there's nothing to report per item - log the
-        # full superset of possible "overall" metrics, all NaN (not None, which
-        # MLflow rejects; NaN is its native "missing value" representation and
-        # shows as blank in the UI), so skipped and real runs keep consistent
-        # overall columns.
-        mlflow.log_metrics(
-            {f"{name}_overall": math.nan for name in overall_metric_names}
-        )
+        # Nothing was evaluated - log the full set of summary metrics, all NaN
+        # (not None, which MLflow rejects; NaN is its native "missing value"
+        # representation and shows as blank in the UI), so skipped and real
+        # runs keep consistent columns.
+        mlflow.log_metrics({name: math.nan for name in metric_names})
         logger.info("Logged NaN metrics and skipped_reason tag to MLflow.")
 
 
+def mlflow_experiment_name(experiment_name: str, prefix: str = "") -> str:
+    """Maps an experiment to its MLflow experiment name.
+
+    The extractor uses no prefix (keeping its existing MLflow history), the
+    analyser uses "analyser/" so experiments sharing a name with an extractor
+    experiment (e.g. body_weight) land in a separate MLflow experiment.
+    """
+    return f"{prefix}{experiment_name}"
+
+
 def run_all_experiments(
-    test_data_dir: Path,
+    experiment_names: list[str],
     run_name: str,
     run_experiment: Callable[[str, str], None],
-    overall_metric_names: list[str],
+    metric_names: list[str],
+    mlflow_prefix: str = "",
 ) -> None:
-    """Runs every experiment found under an agent's test data directory,
-    skipping any that are missing required data instead of aborting the whole
-    batch.
+    """Runs every given experiment, skipping any that are missing required
+    data instead of aborting the whole batch.
 
     Args:
-        test_data_dir (Path): The agent's test data directory.
+        experiment_names (list[str]): The agent's experiments, e.g. from
+            discover_experiment_names or discover_experiment_files.
         run_name (str): Name of this run, used to tag the saved outputs and
             the MLflow run for every experiment.
         run_experiment (Callable[[str, str], None]): The agent's single
             experiment runner, called as run_experiment(experiment_name,
             run_name).
-        overall_metric_names (list[str]): Every metric name the evaluator can
-            report in its "overall" summary, logged as NaN for skipped
-            experiments.
+        metric_names (list[str]): Every summary metric name the evaluator can
+            report, logged as NaN for skipped experiments.
+        mlflow_prefix (str): Prefix for the MLflow experiment names (see
+            mlflow_experiment_name).
     """
-    experiment_names = discover_experiment_names(test_data_dir)
     if not experiment_names:
-        raise ValueError(f"No experiment subdirectories found in {test_data_dir}.")
+        raise ValueError("No experiments found.")
 
     logger.info(f"Running {len(experiment_names)} experiment(s): {experiment_names}")
     for experiment_name in experiment_names:
@@ -266,11 +337,11 @@ def run_all_experiments(
         except ExperimentDataMissing as e:
             # Only data the user needs to add (missing prompt/ground
             # truth/test files) is skipped - anything else (backend errors,
-            # agent failures, ...) still propagates and stops the batch.
+            # ...) still propagates and stops the batch.
             logger.error(f"Skipping experiment '{experiment_name}': {e}")
             log_skipped_to_mlflow(
-                experiment_name,
+                mlflow_experiment_name(experiment_name, mlflow_prefix),
                 run_name,
                 reason=str(e),
-                overall_metric_names=overall_metric_names,
+                metric_names=metric_names,
             )

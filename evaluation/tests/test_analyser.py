@@ -1,0 +1,393 @@
+"""Tests for the analyser evaluation: experiment spec, judge config, backend
+run, judge, evaluator and the end-to-end CLI run, without backend or API key."""
+
+import json
+import tempfile
+import unittest
+from functools import partial
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+import mlflow
+import yaml
+from evaluate_analyser import EvaluationContext, run_experiment
+from pydantic import ValidationError
+from pydantic_ai import BinaryContent
+from pydantic_ai.messages import ModelRequest, UserPromptPart
+from src.analyser import JUDGE_CONFIG_PATH
+from src.analyser.evaluate import AnalyserEvaluation, AnalyserEvaluator
+from src.analyser.experiment_spec import (
+    AnalyserExperimentSpec,
+    load_experiment_spec,
+)
+from src.analyser.judge import LLMJudge, describe_table
+from src.analyser.judge_config import (
+    ALL_METRIC_NAMES,
+    VISUALISATION_CRITERIA,
+    JudgeConfig,
+    load_judge_config,
+)
+from src.analyser.run_analyser import AnalyserRunner, AnalyserRunOutcome
+from src.experiments import ExperimentDataMissing
+
+from tests.helpers import FakeAgentClient, ScriptedJudgeModel
+from tests.test_experiments import MlflowTestCase
+
+SUCCESS_RESULT = {
+    "df_file_path": "plots/out.csv",
+    "data_file_path": "data/in.csv",
+    "plot_path": "plots/plot.png",
+    "code_summary": "Plots weight.",
+    "python_code": "print('plot')",
+    "error_message": None,
+}
+
+
+def make_experiment_dir(root: Path, prompts: object) -> tuple[Path, Path]:
+    """Creates eval_data/analyser-like and ground_truth-like directories."""
+    test_data_dir = root / "analyser"
+    ground_truth_dir = root / "ground_truth"
+    test_data_dir.mkdir()
+    ground_truth_dir.mkdir()
+    (test_data_dir / "weight.csv").write_text("day,kg\n1,80.0\n2,81.5\n")
+    (ground_truth_dir / "ref.png").write_bytes(b"REFPNG")
+    (ground_truth_dir / "ref.csv").write_text("month,sum\n1,10\n")
+    (test_data_dir / "prompt.yaml").write_text(yaml.safe_dump(prompts))
+    return test_data_dir, ground_truth_dir
+
+
+def outcome(**overrides: object) -> AnalyserRunOutcome:
+    values: dict[str, object] = {
+        "execution_success": 1,
+        "error_message": None,
+        "python_code": "print('plot')",
+        "code_summary": "Plots weight.",
+        "plot_png": b"PNG",
+        "output_csv": b"a,b\n1,2\n",
+    }
+    values.update(overrides)
+    return AnalyserRunOutcome(**values)  # type: ignore[arg-type]
+
+
+def user_parts(messages: list[Any]) -> list[Any]:
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    parts = [p for p in request.parts if isinstance(p, UserPromptPart)]
+    content = parts[0].content
+    return list(content) if isinstance(content, list) else [content]
+
+
+class ExperimentSpecTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def load(self, prompts: object) -> AnalyserExperimentSpec:
+        test_data_dir, ground_truth_dir = make_experiment_dir(self.root, prompts)
+        return load_experiment_spec("weight", test_data_dir, ground_truth_dir)
+
+    def test_plain_prompt(self) -> None:
+        spec = self.load({"weight": "Plot my weight."})
+        self.assertEqual(spec.user_prompt, "Plot my weight.")
+        self.assertEqual(spec.input_file.name, "weight.csv")
+        self.assertIsNone(spec.ground_truth_path)
+
+    def test_mapping_with_ground_truth(self) -> None:
+        spec = self.load({"weight": {"prompt": "Plot.", "ground_truth": "ref.png"}})
+        self.assertEqual(spec.user_prompt, "Plot.")
+        assert spec.ground_truth_path is not None
+        self.assertEqual(spec.ground_truth_path.name, "ref.png")
+
+    def test_missing_or_invalid_data_is_reported(self) -> None:
+        cases = [
+            None,  # empty prompt.yaml
+            {"other": "Plot."},
+            {"weight": {"ground_truth": "ref.png"}},
+            {"weight": {"prompt": "Plot.", "ground_truth": "missing.png"}},
+            {"weight": {"prompt": "Plot.", "ground_truth": "ref.txt"}},
+        ]
+        for prompts in cases:
+            with self.subTest(prompts=prompts), tempfile.TemporaryDirectory() as tmp:
+                test_data_dir, ground_truth_dir = make_experiment_dir(
+                    Path(tmp), prompts
+                )
+                (ground_truth_dir / "ref.txt").write_text("x")
+                with self.assertRaises(ExperimentDataMissing):
+                    load_experiment_spec("weight", test_data_dir, ground_truth_dir)
+
+    def test_missing_data_file(self) -> None:
+        test_data_dir, ground_truth_dir = make_experiment_dir(
+            self.root, {"other": "Plot."}
+        )
+        with self.assertRaises(ExperimentDataMissing):
+            load_experiment_spec("other", test_data_dir, ground_truth_dir)
+
+
+class JudgeConfigTest(unittest.TestCase):
+    def test_shipped_config_is_valid(self) -> None:
+        config = load_judge_config()
+        self.assertEqual(config.model, "openai:gpt-6.1-sol")
+        rubrics = config.visualisation_judge.render_rubrics()
+        for name in VISUALISATION_CRITERIA:
+            self.assertIn(f"{name}:", rubrics)
+
+    def test_missing_criterion_or_level_fails(self) -> None:
+        without_criterion = yaml.safe_load(JUDGE_CONFIG_PATH.read_text())
+        del without_criterion["visualisation_judge"]["criteria"]["readability"]
+        with self.assertRaises(ValidationError):
+            JudgeConfig.model_validate(without_criterion)
+
+        without_level = yaml.safe_load(JUDGE_CONFIG_PATH.read_text())
+        del without_level["visualisation_judge"]["criteria"]["readability"]["rubric"][3]
+        with self.assertRaises(ValidationError):
+            JudgeConfig.model_validate(without_level)
+
+
+class AnalyserRunnerTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.input_file = Path(self._tmp.name) / "weight.csv"
+        self.input_file.write_text("day,kg\n1,80\n")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def run_with(self, client: FakeAgentClient) -> AnalyserRunOutcome:
+        return AnalyserRunner(client).run(self.input_file, "Plot.")  # type: ignore[arg-type]
+
+    def test_success_with_plot(self) -> None:
+        client = FakeAgentClient(SUCCESS_RESULT)
+        result = self.run_with(client)
+        self.assertEqual(client.uploaded, ["weight.csv"])
+        self.assertEqual(result.execution_success, 1)
+        self.assertEqual(result.plot_png, b"PNG")
+        self.assertEqual(result.output_csv, b"a,b\n1,2\n")
+        self.assertIsNone(result.download_error)
+
+    def test_success_without_plot(self) -> None:
+        result = self.run_with(
+            FakeAgentClient({**SUCCESS_RESULT, "plot_path": None, "df_file_path": None})
+        )
+        self.assertEqual(result.execution_success, 1)
+        self.assertIsNone(result.plot_png)
+        self.assertIsNone(result.output_csv)
+
+    def test_agent_failure_keeps_code(self) -> None:
+        result = self.run_with(
+            FakeAgentClient(
+                {**SUCCESS_RESULT, "plot_path": None, "error_message": "Traceback"}
+            )
+        )
+        self.assertEqual(result.execution_success, 0)
+        self.assertEqual(result.error_message, "Traceback")
+        self.assertEqual(result.python_code, "print('plot')")
+
+    def test_orchestrator_shaped_failure(self) -> None:
+        result = self.run_with(
+            FakeAgentClient({"analyser_prompt": "", "error_message": "bad json"})
+        )
+        self.assertEqual(result.execution_success, 0)
+        self.assertEqual(result.python_code, "")
+        self.assertIsNone(result.plot_png)
+
+    def test_plot_download_failure(self) -> None:
+        result = self.run_with(FakeAgentClient(SUCCESS_RESULT, plot=None))
+        self.assertEqual(result.execution_success, 1)
+        self.assertIsNone(result.plot_png)
+        assert result.download_error is not None
+        self.assertIn("plots/plot.png", result.download_error)
+
+    def test_prepare_refreshes_agents(self) -> None:
+        client = FakeAgentClient(SUCCESS_RESULT)
+        config = AnalyserRunner(client).prepare()  # type: ignore[arg-type]
+        self.assertEqual(client.calls, ["update_agents", "get_config:analyser"])
+        self.assertEqual(config["model"], "gemma4:latest")
+
+
+class JudgeAndEvaluatorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.config = load_judge_config()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def spec(self, ground_truth: str | None = None) -> AnalyserExperimentSpec:
+        entry: Any = (
+            {"prompt": "Plot my weight.", "ground_truth": ground_truth}
+            if ground_truth
+            else "Plot my weight."
+        )
+        root = self.root / (ground_truth or "none")
+        root.mkdir()
+        test_data_dir, ground_truth_dir = make_experiment_dir(root, {"weight": entry})
+        return load_experiment_spec("weight", test_data_dir, ground_truth_dir)
+
+    def evaluate(
+        self,
+        judge_model: ScriptedJudgeModel,
+        spec: AnalyserExperimentSpec,
+        run: AnalyserRunOutcome,
+    ) -> AnalyserEvaluation:
+        judge = LLMJudge(self.config, model=judge_model.model)
+        return AnalyserEvaluator(judge).evaluate(spec, run)
+
+    def test_full_run_is_scored(self) -> None:
+        judge_model = ScriptedJudgeModel(code_score=4, visualisation_score=3)
+
+        evaluation = self.evaluate(judge_model, self.spec(), outcome())
+
+        self.assertEqual(list(evaluation.metrics), ALL_METRIC_NAMES)
+        self.assertEqual(evaluation.metrics["execution_success"], 1.0)
+        self.assertEqual(evaluation.metrics["code_simplicity"], 4.0)
+        for name in VISUALISATION_CRITERIA:
+            self.assertEqual(evaluation.metrics[name], 3.0)
+        self.assertEqual(
+            evaluation.judgements["readability"]["explanation"], "scored 3"
+        )
+        self.assertEqual(evaluation.judge_errors, [])
+
+        # The code judge sees the code; the visualisation judge sees the plot
+        # and the input data, but never the code.
+        code_text = user_parts(judge_model.requests[0])[0]
+        self.assertIn("print('plot')", code_text)
+        visualisation_parts = user_parts(judge_model.requests[1])
+        self.assertIn("80.0", visualisation_parts[0])
+        self.assertNotIn("print('plot')", visualisation_parts[0])
+        images = [p for p in visualisation_parts if isinstance(p, BinaryContent)]
+        self.assertEqual([i.data for i in images], [b"PNG"])
+
+    def test_png_reference_is_attached_as_second_image(self) -> None:
+        judge_model = ScriptedJudgeModel()
+        self.evaluate(judge_model, self.spec("ref.png"), outcome())
+
+        parts = user_parts(judge_model.requests[1])
+        images = [p.data for p in parts if isinstance(p, BinaryContent)]
+        self.assertEqual(images, [b"PNG", b"REFPNG"])
+        self.assertIn("reference plot", parts[0])
+
+    def test_csv_reference_is_shown_with_output_data(self) -> None:
+        judge_model = ScriptedJudgeModel()
+        self.evaluate(judge_model, self.spec("ref.csv"), outcome())
+
+        text = user_parts(judge_model.requests[1])[0]
+        self.assertIn("<REFERENCE_DATA>", text)
+        self.assertIn("month,sum", text)
+        self.assertIn("<OUTPUT_DATA>", text)
+
+    def test_failed_execution_skips_visualisation_but_judges_code(self) -> None:
+        judge_model = ScriptedJudgeModel()
+        evaluation = self.evaluate(
+            judge_model,
+            self.spec(),
+            outcome(execution_success=0, error_message="Traceback", plot_png=None),
+        )
+        self.assertEqual(evaluation.metrics["execution_success"], 0.0)
+        self.assertEqual(evaluation.metrics["code_simplicity"], 4.0)
+        for name in VISUALISATION_CRITERIA:
+            self.assertIsNone(evaluation.metrics[name])
+        self.assertEqual(len(judge_model.requests), 1)
+
+    def test_no_plot_and_no_code_skip_both_judges(self) -> None:
+        judge_model = ScriptedJudgeModel()
+        evaluation = self.evaluate(
+            judge_model, self.spec(), outcome(python_code="", plot_png=None)
+        )
+        self.assertEqual(evaluation.metrics["execution_success"], 1.0)
+        self.assertIsNone(evaluation.metrics["code_simplicity"])
+        self.assertEqual(
+            evaluation.judgements["readability"], {"skipped": "no plot was produced"}
+        )
+        self.assertEqual(judge_model.requests, [])
+
+    def test_out_of_range_score_becomes_judge_error(self) -> None:
+        judge_model = ScriptedJudgeModel(code_score=7)
+        evaluation = self.evaluate(judge_model, self.spec(), outcome())
+        self.assertIsNone(evaluation.metrics["code_simplicity"])
+        self.assertEqual(evaluation.metrics["readability"], 3.0)
+        self.assertEqual(len(evaluation.judge_errors), 1)
+        self.assertIn("code judge failed", evaluation.judge_errors[0])
+
+    def test_judge_exception_becomes_judge_error(self) -> None:
+        evaluation = self.evaluate(
+            ScriptedJudgeModel(fail=True), self.spec(), outcome()
+        )
+        self.assertTrue(
+            all(evaluation.metrics[n] is None for n in ALL_METRIC_NAMES[1:])
+        )
+        self.assertEqual(len(evaluation.judge_errors), 2)
+
+
+class DescribeTableTest(unittest.TestCase):
+    def test_truncates_long_tables(self) -> None:
+        content = ("a,b\n" + "1,2\n" * 100).encode()
+        text = describe_table(content, "x.csv", max_chars=20)
+        self.assertIn("100 data rows. Header: a,b", text)
+        self.assertIn("truncated: showing the first 20 of 404 characters", text)
+
+    def test_keeps_short_tables_whole(self) -> None:
+        text = describe_table(b"a,b\n1,2\n", "x.csv", max_chars=100)
+        self.assertNotIn("truncated", text)
+        self.assertTrue(text.endswith("a,b\n1,2\n"))
+
+
+class RunExperimentTest(MlflowTestCase):
+    def test_logs_scored_run_with_artifacts(self) -> None:
+        test_data_dir, ground_truth_dir = make_experiment_dir(
+            self.tmp, {"weight": "Plot my weight."}
+        )
+        judge_model = ScriptedJudgeModel()
+        context = EvaluationContext(
+            runner=AnalyserRunner(FakeAgentClient(SUCCESS_RESULT)),  # type: ignore[arg-type]
+            evaluator=AnalyserEvaluator(
+                LLMJudge(load_judge_config(), model=judge_model.model)
+            ),
+            analyser_config={"model": "gemma4:latest", "model_provider": "ollama"},
+            judge_model="openai:gpt-6.1-sol",
+            judge_config_sha="abc",
+        )
+        with mock.patch(
+            "evaluate_analyser.load_experiment_spec",
+            partial(
+                load_experiment_spec,
+                test_data_dir=test_data_dir,
+                ground_truth_dir=ground_truth_dir,
+            ),
+        ):
+            run_experiment("weight", "run1", context)
+
+        run = self.only_run("analyser/weight")
+        self.assertEqual(set(run.data.metrics), set(ALL_METRIC_NAMES))
+        self.assertEqual(run.data.metrics["code_simplicity"], 4.0)
+        self.assertEqual(run.data.params["analyser_model"], "gemma4:latest")
+        self.assertEqual(run.data.params["ground_truth"], "none")
+        self.assertEqual(run.data.params["judge_config_sha"], "abc")
+        self.assertEqual(run.data.tags["agent"], "analyser")
+        artifacts = {
+            a.path for a in mlflow.artifacts.list_artifacts(run_id=run.info.run_id)
+        }
+        self.assertEqual(
+            artifacts,
+            {
+                "plot.png",
+                "output_data.csv",
+                "analyser_code.py",
+                "code_summary.txt",
+                "judge_results.json",
+                "analyser_config.yaml",
+                "judge_config.yaml",
+            },
+        )
+        judgements = json.loads(
+            mlflow.artifacts.load_text(f"runs:/{run.info.run_id}/judge_results.json")
+        )
+        self.assertEqual(judgements["readability"]["score"], 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

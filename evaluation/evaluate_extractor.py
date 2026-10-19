@@ -1,8 +1,8 @@
 """CLI tool to run and evaluate data_extractor agent experiments.
 
 Runs the data extractor against the test files in
-test_data/extractor/{experiment_name}/, using the prompt for that experiment from
-test_data/extractor/prompt.yaml, then evaluates the result against the shared
+eval_data/extractor/{experiment_name}/, using the prompt for that experiment from
+eval_data/extractor/prompt.yaml, then evaluates the result against the shared
 ground_truth/{experiment_name}.csv and reports metrics.
 Metrics, params, and output files are logged to MLflow (sqlite:///mlflow.db) under
 an MLflow experiment named experiment_name and a run named run_name, so past runs
@@ -11,7 +11,7 @@ Only the extracted data CSV is kept permanently on disk (extracted_data/); the
 per-run config yaml and false positive/negative CSVs are written to the system
 temp directory just long enough to be logged as MLflow artifacts, then removed.
 
-If --experiment_name is omitted, every subdirectory of test_data/extractor/ is run
+If --experiment_name is omitted, every subdirectory of eval_data/extractor/ is run
 in turn. In that mode, an experiment missing its prompt, ground truth, or test files is
 logged as an error and skipped (with NaN metrics logged to MLflow) rather than
 aborting the whole batch.
@@ -31,6 +31,8 @@ from src.experiments import (
     GROUND_TRUTH_DIR,
     check_experiment_ready,
     configure_mlflow,
+    discover_experiment_names,
+    flatten_metrics,
     load_user_prompt,
     log_run_to_mlflow,
     run_all_experiments,
@@ -80,7 +82,7 @@ def log_to_mlflow(
             "model": config.get("model"),
             "model_provider": config.get("model_provider"),
         },
-        metrics=metrics,
+        metrics=flatten_metrics(metrics),
         artifact_paths=[
             EXTRACTED_DATA_DIR / f"{experiment_name}_{run_name}.csv",
             config_path,
@@ -94,7 +96,7 @@ def run_experiment(experiment_name: str, run_name: str) -> None:
 
     Args:
         experiment_name (str): Name of the experiment (subfolder of
-            test_data/extractor/).
+            eval_data/extractor/).
         run_name (str): Name of this run, used to tag the saved outputs.
     """
     # Fail fast (before any backend call) if the prompt, ground truth, or test
@@ -164,8 +166,8 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "Name of the experiment (subfolder of test_data/extractor/). "
-            "If omitted, every experiment under test_data/extractor/ is run."
+            "Name of the experiment (subfolder of eval_data/extractor/). "
+            "If omitted, every experiment under eval_data/extractor/ is run."
         ),
     )
     parser.add_argument(
@@ -179,10 +181,10 @@ def main() -> None:
     configure_mlflow()
     if args.experiment_name is None:
         run_all_experiments(
-            EXTRACTOR_TEST_DATA_DIR,
+            discover_experiment_names(EXTRACTOR_TEST_DATA_DIR),
             args.run_name,
             run_experiment,
-            ALL_OVERALL_METRIC_NAMES,
+            [f"{name}_overall" for name in ALL_OVERALL_METRIC_NAMES],
         )
     else:
         run_experiment(args.experiment_name, args.run_name)
