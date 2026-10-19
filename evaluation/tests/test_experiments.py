@@ -10,7 +10,6 @@ import mlflow
 from src import experiments
 from src.experiments import (
     ExperimentDataMissing,
-    discover_experiment_files,
     flatten_metrics,
     log_run_to_mlflow,
     log_skipped_to_mlflow,
@@ -42,28 +41,6 @@ class MlflowTestCase(unittest.TestCase):
         runs = mlflow.search_runs([experiment.experiment_id], output_format="list")
         self.assertEqual(len(runs), 1)
         return runs[0]
-
-
-class DiscoverExperimentFilesTest(unittest.TestCase):
-    def test_lists_data_files_by_stem(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for name in ("b.csv", "a.XLSX", "prompt.yaml", "notes.txt"):
-                (root / name).write_text("x")
-            (root / "folder.csv").mkdir()
-
-            files = discover_experiment_files(root, (".csv", ".xlsx"))
-
-        self.assertEqual(list(files), ["a", "b"])
-        self.assertEqual(files["a"].name, "a.XLSX")
-
-    def test_rejects_ambiguous_stems(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "a.csv").write_text("x")
-            (root / "a.xlsx").write_text("x")
-            with self.assertRaises(ValueError):
-                discover_experiment_files(root, (".csv", ".xlsx"))
 
 
 class FlattenMetricsTest(unittest.TestCase):

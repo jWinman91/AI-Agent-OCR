@@ -1,32 +1,27 @@
-"""Resolves an analyser experiment's input file, prompt and optional ground truth.
+"""Resolves analyser experiments from eval_data/analyser/prompt.yaml.
 
-An analyser experiment is one data file in eval_data/analyser/ (experiment name =
-file stem). Its entry in eval_data/analyser/prompt.yaml is either the prompt
-itself or a mapping that also names a ground truth file in ground_truth/:
+Every top-level key of prompt.yaml is one experiment. It maps to the data file to
+analyse (in eval_data/analyser/), the user prompt to try, and optionally a ground
+truth file in the shared ground_truth/ directory:
 
     kontoauszug:
+      data_file: kontoauszug.csv
+      ground_truth: monthly_transaction_sum.png
       prompt: |
         Plot the monthly sum of incoming and outgoing transactions.
-      ground_truth: monthly_transaction_sum.png
-    body_weight: |
-      Plot my body weight over time.
 
-A named ground truth is required to exist; it is shown to the judge as a
-reference for a good result - a .png reference plot, or a .csv with the expected
-analysis output.
+Several experiments can use the same data file with different prompts. A named
+ground truth is required to exist; it is shown to the judge as a reference for a
+good result - a .png reference plot, or a .csv with the expected analysis output.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 from src.analyser import ANALYSER_TEST_DATA_DIR, DATA_FILE_SUFFIXES
-from src.experiments import (
-    GROUND_TRUTH_DIR,
-    PROMPT_FILE_NAME,
-    ExperimentDataMissing,
-    discover_experiment_files,
-)
+from src.experiments import GROUND_TRUTH_DIR, PROMPT_FILE_NAME, ExperimentDataMissing
 
 GROUND_TRUTH_SUFFIXES = (".png", ".csv")
 
@@ -37,6 +32,28 @@ class AnalyserExperimentSpec:
     input_file: Path
     user_prompt: str
     ground_truth_path: Path | None
+
+
+def load_experiment_entries(
+    test_data_dir: Path = ANALYSER_TEST_DATA_DIR,
+) -> dict[str, Any]:
+    """Loads all experiment entries from the analyser's prompt.yaml.
+
+    Args:
+        test_data_dir (Path): The analyser's test data directory.
+    Returns:
+        dict[str, Any]: Experiment name -> raw entry, in file order; empty if
+        prompt.yaml is missing or empty.
+    """
+    prompt_path = test_data_dir / PROMPT_FILE_NAME
+    if not prompt_path.exists():
+        return {}
+    with prompt_path.open("r") as f:
+        # An empty prompt.yaml loads as None.
+        entries = yaml.safe_load(f) or {}
+    if not isinstance(entries, dict):
+        raise ValueError(f"{prompt_path} must map experiment names to entries.")
+    return entries
 
 
 def load_experiment_spec(
@@ -50,53 +67,44 @@ def load_experiment_spec(
     without wasting a real agent run.
 
     Args:
-        experiment_name (str): Name of the experiment (stem of its data file).
+        experiment_name (str): Name of the experiment (key in prompt.yaml).
         test_data_dir (Path): The analyser's test data directory.
         ground_truth_dir (Path): The shared ground truth directory.
     Returns:
-        AnalyserExperimentSpec: The experiment's input file, prompt and
+        AnalyserExperimentSpec: The experiment's data file, prompt and
         optional ground truth.
     Raises:
-        ExperimentDataMissing: If the data file, the prompt entry or a named
-            ground truth file is missing or invalid.
+        ExperimentDataMissing: If the prompt.yaml entry is missing or invalid,
+            or its data file or named ground truth file doesn't exist.
     """
-    input_files = discover_experiment_files(test_data_dir, DATA_FILE_SUFFIXES)
-    if experiment_name not in input_files:
-        raise ExperimentDataMissing(
-            f"No data file ({', '.join(DATA_FILE_SUFFIXES)}) named "
-            f"'{experiment_name}' found in {test_data_dir}."
-        )
-
     prompt_path = test_data_dir / PROMPT_FILE_NAME
-    if not prompt_path.exists():
+    entry = load_experiment_entries(test_data_dir).get(experiment_name)
+    if entry is None:
         raise ExperimentDataMissing(
-            f"Prompt file not found at {prompt_path}. "
-            f"Create it with a '{experiment_name}' key."
+            f"{prompt_path} must define a '{experiment_name}' entry with "
+            f"'data_file' and 'prompt'."
         )
-    with prompt_path.open("r") as f:
-        # An empty prompt.yaml loads as None.
-        entries = yaml.safe_load(f) or {}
-    if experiment_name not in entries:
+    if not (
+        isinstance(entry, dict)
+        and isinstance(entry.get("data_file"), str)
+        and isinstance(entry.get("prompt"), str)
+    ):
         raise ExperimentDataMissing(
-            f"{prompt_path} must define a '{experiment_name}' key "
-            f"with the user prompt for that experiment."
+            f"'{experiment_name}' in {prompt_path} must be a mapping with "
+            f"'data_file' and 'prompt' keys (and an optional 'ground_truth')."
         )
 
-    entry = entries[experiment_name]
-    ground_truth_name: str | None = None
-    if isinstance(entry, str):
-        user_prompt = entry
-    elif isinstance(entry, dict) and isinstance(entry.get("prompt"), str):
-        user_prompt = entry["prompt"]
-        ground_truth_name = entry.get("ground_truth")
-    else:
+    input_file = test_data_dir / entry["data_file"]
+    if input_file.suffix.lower() not in DATA_FILE_SUFFIXES:
         raise ExperimentDataMissing(
-            f"'{experiment_name}' in {prompt_path} must be a prompt string or a "
-            f"mapping with a 'prompt' key (and an optional 'ground_truth')."
+            f"Data file {input_file.name} for '{experiment_name}' must be one of "
+            f"{', '.join(DATA_FILE_SUFFIXES)}."
         )
+    if not input_file.is_file():
+        raise ExperimentDataMissing(f"Data file not found at {input_file}.")
 
     ground_truth_path = None
-    if ground_truth_name is not None:
+    if (ground_truth_name := entry.get("ground_truth")) is not None:
         ground_truth_path = ground_truth_dir / str(ground_truth_name)
         if ground_truth_path.suffix.lower() not in GROUND_TRUTH_SUFFIXES:
             raise ExperimentDataMissing(
@@ -110,7 +118,7 @@ def load_experiment_spec(
 
     return AnalyserExperimentSpec(
         name=experiment_name,
-        input_file=input_files[experiment_name],
-        user_prompt=user_prompt,
+        input_file=input_file,
+        user_prompt=entry["prompt"],
         ground_truth_path=ground_truth_path,
     )

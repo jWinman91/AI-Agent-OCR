@@ -9,8 +9,8 @@ from src.experiments import TEST_DATA_DIR
 ANALYSER_TEST_DATA_DIR = TEST_DATA_DIR / "analyser"
 JUDGE_CONFIG_PATH = Path(__file__).resolve().parent / "judge_config.yaml"
 
-# Every analyser experiment is one data file in ANALYSER_TEST_DATA_DIR, with the
-# same suffixes the backend's /uploaddatafile accepts.
+# An analyser experiment's data file must have one of the suffixes the backend's
+# /uploaddatafile accepts.
 DATA_FILE_SUFFIXES = (".csv", ".xlsx", ".xls")
 
 # Analyser experiments can share a name with an extractor experiment (e.g.

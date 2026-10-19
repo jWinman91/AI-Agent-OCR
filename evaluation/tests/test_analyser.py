@@ -19,6 +19,7 @@ from src.analyser import JUDGE_CONFIG_PATH
 from src.analyser.evaluate import AnalyserEvaluation, AnalyserEvaluator
 from src.analyser.experiment_spec import (
     AnalyserExperimentSpec,
+    load_experiment_entries,
     load_experiment_spec,
 )
 from src.analyser.judge import LLMJudge, describe_table
@@ -57,6 +58,18 @@ def make_experiment_dir(root: Path, prompts: object) -> tuple[Path, Path]:
     return test_data_dir, ground_truth_dir
 
 
+def entry(
+    prompt: str = "Plot my weight.",
+    data_file: str = "weight.csv",
+    ground_truth: str | None = None,
+) -> dict[str, str]:
+    """A prompt.yaml entry for the weight.csv created by make_experiment_dir."""
+    values = {"data_file": data_file, "prompt": prompt}
+    if ground_truth is not None:
+        values["ground_truth"] = ground_truth
+    return values
+
+
 def outcome(**overrides: object) -> AnalyserRunOutcome:
     values: dict[str, object] = {
         "execution_success": 1,
@@ -90,41 +103,53 @@ class ExperimentSpecTest(unittest.TestCase):
         test_data_dir, ground_truth_dir = make_experiment_dir(self.root, prompts)
         return load_experiment_spec("weight", test_data_dir, ground_truth_dir)
 
-    def test_plain_prompt(self) -> None:
-        spec = self.load({"weight": "Plot my weight."})
+    def test_entry_without_ground_truth(self) -> None:
+        spec = self.load({"weight": entry()})
+        self.assertEqual(spec.name, "weight")
         self.assertEqual(spec.user_prompt, "Plot my weight.")
         self.assertEqual(spec.input_file.name, "weight.csv")
         self.assertIsNone(spec.ground_truth_path)
 
-    def test_mapping_with_ground_truth(self) -> None:
-        spec = self.load({"weight": {"prompt": "Plot.", "ground_truth": "ref.png"}})
-        self.assertEqual(spec.user_prompt, "Plot.")
+    def test_entry_with_ground_truth(self) -> None:
+        spec = self.load({"weight": entry(ground_truth="ref.png")})
         assert spec.ground_truth_path is not None
         self.assertEqual(spec.ground_truth_path.name, "ref.png")
+
+    def test_experiments_can_share_a_data_file(self) -> None:
+        test_data_dir, ground_truth_dir = make_experiment_dir(
+            self.root,
+            {"weight": entry(), "weight_trend": entry(prompt="Plot the trend.")},
+        )
+        self.assertEqual(
+            list(load_experiment_entries(test_data_dir)), ["weight", "weight_trend"]
+        )
+        spec = load_experiment_spec("weight_trend", test_data_dir, ground_truth_dir)
+        self.assertEqual(spec.input_file.name, "weight.csv")
+        self.assertEqual(spec.user_prompt, "Plot the trend.")
+
+    def test_missing_prompt_file_means_no_experiments(self) -> None:
+        self.assertEqual(load_experiment_entries(self.root), {})
 
     def test_missing_or_invalid_data_is_reported(self) -> None:
         cases = [
             None,  # empty prompt.yaml
-            {"other": "Plot."},
-            {"weight": {"ground_truth": "ref.png"}},
-            {"weight": {"prompt": "Plot.", "ground_truth": "missing.png"}},
-            {"weight": {"prompt": "Plot.", "ground_truth": "ref.txt"}},
+            {"other": entry()},
+            {"weight": "Plot my weight."},  # no data_file
+            {"weight": {"data_file": "weight.csv"}},  # no prompt
+            {"weight": entry(data_file="missing.csv")},
+            {"weight": entry(data_file="notes.txt")},
+            {"weight": entry(ground_truth="missing.png")},
+            {"weight": entry(ground_truth="ref.txt")},
         ]
         for prompts in cases:
             with self.subTest(prompts=prompts), tempfile.TemporaryDirectory() as tmp:
                 test_data_dir, ground_truth_dir = make_experiment_dir(
                     Path(tmp), prompts
                 )
+                (test_data_dir / "notes.txt").write_text("x")
                 (ground_truth_dir / "ref.txt").write_text("x")
                 with self.assertRaises(ExperimentDataMissing):
                     load_experiment_spec("weight", test_data_dir, ground_truth_dir)
-
-    def test_missing_data_file(self) -> None:
-        test_data_dir, ground_truth_dir = make_experiment_dir(
-            self.root, {"other": "Plot."}
-        )
-        with self.assertRaises(ExperimentDataMissing):
-            load_experiment_spec("other", test_data_dir, ground_truth_dir)
 
 
 class JudgeConfigTest(unittest.TestCase):
@@ -218,14 +243,11 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def spec(self, ground_truth: str | None = None) -> AnalyserExperimentSpec:
-        entry: Any = (
-            {"prompt": "Plot my weight.", "ground_truth": ground_truth}
-            if ground_truth
-            else "Plot my weight."
-        )
         root = self.root / (ground_truth or "none")
         root.mkdir()
-        test_data_dir, ground_truth_dir = make_experiment_dir(root, {"weight": entry})
+        test_data_dir, ground_truth_dir = make_experiment_dir(
+            root, {"weight": entry(ground_truth=ground_truth)}
+        )
         return load_experiment_spec("weight", test_data_dir, ground_truth_dir)
 
     def evaluate(
@@ -339,7 +361,7 @@ class DescribeTableTest(unittest.TestCase):
 class RunExperimentTest(MlflowTestCase):
     def test_logs_scored_run_with_artifacts(self) -> None:
         test_data_dir, ground_truth_dir = make_experiment_dir(
-            self.tmp, {"weight": "Plot my weight."}
+            self.tmp, {"weight": entry()}
         )
         judge_model = ScriptedJudgeModel()
         context = EvaluationContext(

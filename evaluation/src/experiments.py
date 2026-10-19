@@ -1,12 +1,12 @@
 """Shared experiment helpers for the extractor and analyser evaluators.
 
-An experiment is either a subdirectory of an agent's test data directory
-holding the test files (extractor, e.g. eval_data/extractor/body_weight/) or a
-single input file in it (analyser, e.g. eval_data/analyser/body_weight.csv), with
-its user prompt stored under the experiment's key in that directory's shared
-prompt.yaml. Each experiment run is logged to MLflow with a 1:1 mapping: MLflow
-experiment = experiment_name (prefixed with "analyser/" for the analyser), MLflow
-run = run_name.
+Each agent's experiments live in its test data directory with one shared
+prompt.yaml keyed by experiment name: for the extractor an experiment is a
+subdirectory of test files (e.g. eval_data/extractor/body_weight/), for the
+analyser a prompt.yaml entry naming its data file (see
+src/analyser/experiment_spec.py). Each experiment run is logged to MLflow with
+a 1:1 mapping: MLflow experiment = experiment_name (prefixed with "analyser/"
+for the analyser), MLflow run = run_name.
 
 All paths are resolved relative to the evaluation/ directory, so the CLIs work
 regardless of the directory they are started from.
@@ -68,39 +68,6 @@ def discover_experiment_names(test_data_dir: Path) -> list[str]:
         list[str]: Sorted experiment names (subdirectory names).
     """
     return sorted(path.name for path in test_data_dir.iterdir() if path.is_dir())
-
-
-def discover_experiment_files(
-    test_data_dir: Path, suffixes: tuple[str, ...]
-) -> dict[str, Path]:
-    """Lists every experiment input file directly under an agent's test data
-    directory, for agents whose experiments are single files rather than
-    subdirectories (e.g. one data file per analyser experiment).
-
-    Args:
-        test_data_dir (Path): The agent's test data directory, e.g.
-            eval_data/analyser/.
-        suffixes (tuple[str, ...]): Lower-case file suffixes that count as
-            experiment inputs (e.g. (".csv", ".xlsx")); anything else, such as
-            prompt.yaml, is ignored.
-    Returns:
-        dict[str, Path]: Experiment name (file stem) -> input file, sorted by
-        name.
-    Raises:
-        ValueError: If two input files share a stem (e.g. a.csv and a.xlsx),
-            since the experiment name would be ambiguous.
-    """
-    files: dict[str, Path] = {}
-    for path in sorted(test_data_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in suffixes:
-            continue
-        if path.stem in files:
-            raise ValueError(
-                f"Experiment name '{path.stem}' is ambiguous: both "
-                f"{files[path.stem].name} and {path.name} exist in {test_data_dir}."
-            )
-        files[path.stem] = path
-    return files
 
 
 def load_user_prompt(test_data_dir: Path, experiment_name: str) -> str:
@@ -316,7 +283,7 @@ def run_all_experiments(
 
     Args:
         experiment_names (list[str]): The agent's experiments, e.g. from
-            discover_experiment_names or discover_experiment_files.
+            discover_experiment_names or the analyser's prompt.yaml keys.
         run_name (str): Name of this run, used to tag the saved outputs and
             the MLflow run for every experiment.
         run_experiment (Callable[[str, str], None]): The agent's single

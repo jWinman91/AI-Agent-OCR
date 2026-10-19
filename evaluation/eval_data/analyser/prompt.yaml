@@ -1,0 +1,7 @@
+kontoauszug:
+  data_file: kontoauszug.csv
+  ground_truth: monthly_transaction_sum.png
+  prompt: |
+    here is data from my bank account statement which shows the SALDO for each transaction.
+    first calculate the transaction amount for each transaction by taking the difference (make sure to convert the saldo to numerical value first).
+    then filter on Zinsen and Ertrag and plot the sum of the transaction amount per month in a time series plot

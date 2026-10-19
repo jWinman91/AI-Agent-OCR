@@ -1,9 +1,9 @@
 """CLI tool to run and evaluate analyser agent experiments with an LLM judge.
 
-Every data file in eval_data/analyser/ (CSV/Excel) is one experiment, named after
-the file stem. Its prompt (and optional ground truth reference from the shared
-ground_truth/ directory) comes from eval_data/analyser/prompt.yaml - see
-src/analyser/experiment_spec.py for the format.
+Every entry in eval_data/analyser/prompt.yaml is one experiment: it names the
+data file to analyse (CSV/Excel in eval_data/analyser/), the user prompt to try
+and optionally a ground truth reference from the shared ground_truth/ directory -
+see src/analyser/experiment_spec.py for the format.
 
 For each experiment the data file is uploaded to the backend and the analyser is
 run on the prompt. The run is then scored:
@@ -21,7 +21,7 @@ MLflow (sqlite:///mlflow.db) under an MLflow experiment named
 analyser/{experiment_name} and a run named run_name - failed runs included.
 
 If --experiment_name is omitted, every experiment is run in turn; one missing its
-prompt or named ground truth is logged as skipped (NaN metrics) instead of
+data file or named ground truth is logged as skipped (NaN metrics) instead of
 aborting the batch.
 
 Usage:
@@ -42,13 +42,15 @@ from typing import Any
 import yaml
 from loguru import logger
 from src.analyser import (
-    ANALYSER_TEST_DATA_DIR,
-    DATA_FILE_SUFFIXES,
     JUDGE_CONFIG_PATH,
     MLFLOW_PREFIX,
 )
 from src.analyser.evaluate import AnalyserEvaluation, AnalyserEvaluator
-from src.analyser.experiment_spec import AnalyserExperimentSpec, load_experiment_spec
+from src.analyser.experiment_spec import (
+    AnalyserExperimentSpec,
+    load_experiment_entries,
+    load_experiment_spec,
+)
 from src.analyser.judge import LLMJudge
 from src.analyser.judge_config import (
     ALL_METRIC_NAMES,
@@ -58,7 +60,6 @@ from src.analyser.judge_config import (
 from src.analyser.run_analyser import AnalyserRunner, AnalyserRunOutcome
 from src.experiments import (
     configure_mlflow,
-    discover_experiment_files,
     log_run_to_mlflow,
     mlflow_experiment_name,
     run_all_experiments,
@@ -192,8 +193,8 @@ def run_experiment(
     """Runs the analyser on one experiment, judges the result and logs it.
 
     Args:
-        experiment_name (str): Name of the experiment (stem of its data file
-            in eval_data/analyser/).
+        experiment_name (str): Name of the experiment (key in
+            eval_data/analyser/prompt.yaml).
         run_name (str): Name of this run.
         context (EvaluationContext): Shared runner, evaluator and settings.
     """
@@ -231,8 +232,8 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "Name of the experiment (stem of a data file in eval_data/analyser/). "
-            "If omitted, every experiment under eval_data/analyser/ is run."
+            "Name of the experiment (key in eval_data/analyser/prompt.yaml). "
+            "If omitted, every experiment in that file is run."
         ),
     )
     parser.add_argument(
@@ -266,7 +267,7 @@ def main() -> None:
 
     if args.experiment_name is None:
         run_all_experiments(
-            list(discover_experiment_files(ANALYSER_TEST_DATA_DIR, DATA_FILE_SUFFIXES)),
+            list(load_experiment_entries()),
             args.run_name,
             partial(run_experiment, context=context),
             ALL_METRIC_NAMES,
