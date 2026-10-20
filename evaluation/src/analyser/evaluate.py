@@ -52,7 +52,11 @@ class AnalyserEvaluator:
         else:
             try:
                 code_judgement = self._judge.judge_code(
-                    spec.user_prompt, outcome.code_summary, outcome.python_code
+                    spec.user_prompt,
+                    outcome.code_summary,
+                    outcome.python_code,
+                    spec.input_file,
+                    outcome.error_message,
                 )
                 self._record(evaluation, code_judgement.model_dump())
             except Exception as e:

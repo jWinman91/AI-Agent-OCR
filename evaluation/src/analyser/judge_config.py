@@ -8,7 +8,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 from src.analyser import JUDGE_CONFIG_PATH
 
-CODE_CRITERIA = ["code_simplicity"]
+CODE_CRITERIA = ["code_simplicity", "code_correctness"]
 VISUALISATION_CRITERIA = [
     "data_correctness",
     "task_relevance",
@@ -65,6 +65,7 @@ class JudgeConfig(BaseModel):
     model: str
     model_settings: dict[str, Any] = Field(default_factory=dict)
     max_data_chars: int = Field(gt=0)
+    code_judge_sample_rows: int = Field(gt=0)
     retries: int = Field(ge=0)
     code_judge: JudgeSectionConfig
     visualisation_judge: JudgeSectionConfig

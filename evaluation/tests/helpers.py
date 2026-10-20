@@ -35,8 +35,10 @@ class ScriptedJudgeModel:
             return ModelResponse(parts=[TextPart("OK")])
         tool = info.output_tools[0]
         properties = tool.parameters_json_schema["properties"]
-        if "code_simplicity" in properties:
-            args = {"code_simplicity": criterion(self.code_score)}
+        if "ok" in properties:  # LLMJudge.check_model
+            args: dict[str, Any] = {"ok": True}
+        elif "code_simplicity" in properties:
+            args = {name: criterion(self.code_score) for name in properties}
         else:
             args = {name: criterion(self.visualisation_score) for name in properties}
         return ModelResponse(

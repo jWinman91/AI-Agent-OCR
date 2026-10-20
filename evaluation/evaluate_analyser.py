@@ -9,7 +9,8 @@ For each experiment the data file is uploaded to the backend and the analyser is
 run on the prompt. The run is then scored:
 - execution_success: 1 if the backend reported no error, else 0 (the generated
   code is not executed again),
-- code_simplicity: judged from the generated code, whenever there is code,
+- code_simplicity, code_correctness: judged from the generated code, the
+  execution result and a profile of the input data, whenever there is code,
 - data_correctness, task_relevance, chart_suitability, completeness,
   readability: judged from the plot, the request, the input data and the
   reference, only if execution succeeded and a plot exists (NaN otherwise).
@@ -247,9 +248,8 @@ def main() -> None:
     # Everything that can fail without touching the analyser is checked first:
     # the judge config, the API key and the judge model itself.
     judge_config = load_judge_config()
-    if judge_config.model.startswith("openai:") and not os.environ.get(
-        "OPENAI_API_KEY"
-    ):
+    # Covers both "openai:" and "openai-responses:" models.
+    if judge_config.model.startswith("openai") and not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("Set OPENAI_API_KEY for the judge model first.")
     judge = LLMJudge(judge_config)
     logger.info(f"Checking judge model {judge_config.model}...")

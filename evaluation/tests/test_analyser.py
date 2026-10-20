@@ -1,6 +1,7 @@
 """Tests for the analyser evaluation: experiment spec, judge config, backend
 run, judge, evaluator and the end-to-end CLI run, without backend or API key."""
 
+import io
 import json
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from typing import Any
 from unittest import mock
 
 import mlflow
+import pandas as pd
 import yaml
 from evaluate_analyser import EvaluationContext, run_experiment
 from pydantic import ValidationError
@@ -22,9 +24,10 @@ from src.analyser.experiment_spec import (
     load_experiment_entries,
     load_experiment_spec,
 )
-from src.analyser.judge import LLMJudge, describe_table
+from src.analyser.judge import LLMJudge, describe_table, profile_table
 from src.analyser.judge_config import (
     ALL_METRIC_NAMES,
+    CODE_CRITERIA,
     VISUALISATION_CRITERIA,
     JudgeConfig,
     load_judge_config,
@@ -155,7 +158,7 @@ class ExperimentSpecTest(unittest.TestCase):
 class JudgeConfigTest(unittest.TestCase):
     def test_shipped_config_is_valid(self) -> None:
         config = load_judge_config()
-        self.assertEqual(config.model, "openai:gpt-6.1-sol")
+        self.assertEqual(config.model, "openai-responses:gpt-6.1-sol")
         rubrics = config.visualisation_judge.render_rubrics()
         for name in VISUALISATION_CRITERIA:
             self.assertIn(f"{name}:", rubrics)
@@ -266,7 +269,8 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
 
         self.assertEqual(list(evaluation.metrics), ALL_METRIC_NAMES)
         self.assertEqual(evaluation.metrics["execution_success"], 1.0)
-        self.assertEqual(evaluation.metrics["code_simplicity"], 4.0)
+        for name in CODE_CRITERIA:
+            self.assertEqual(evaluation.metrics[name], 4.0)
         for name in VISUALISATION_CRITERIA:
             self.assertEqual(evaluation.metrics[name], 3.0)
         self.assertEqual(
@@ -274,10 +278,14 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
         )
         self.assertEqual(evaluation.judge_errors, [])
 
-        # The code judge sees the code; the visualisation judge sees the plot
-        # and the input data, but never the code.
+        # The code judge sees the code, the execution result and the input
+        # data profile; the visualisation judge sees the plot and the input
+        # data, but never the code.
         code_text = user_parts(judge_model.requests[0])[0]
         self.assertIn("print('plot')", code_text)
+        self.assertIn("<EXECUTION_RESULT>\nsucceeded\n</EXECUTION_RESULT>", code_text)
+        self.assertIn("2 data rows, 2 columns.", code_text)
+        self.assertIn("- kg: dtype float64", code_text)
         visualisation_parts = user_parts(judge_model.requests[1])
         self.assertIn("80.0", visualisation_parts[0])
         self.assertNotIn("print('plot')", visualisation_parts[0])
@@ -307,10 +315,18 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
         evaluation = self.evaluate(
             judge_model,
             self.spec(),
-            outcome(execution_success=0, error_message="Traceback", plot_png=None),
+            outcome(
+                execution_success=0,
+                error_message="Traceback: KeyError 'weight'",
+                plot_png=None,
+            ),
         )
         self.assertEqual(evaluation.metrics["execution_success"], 0.0)
-        self.assertEqual(evaluation.metrics["code_simplicity"], 4.0)
+        code_text = user_parts(judge_model.requests[0])[0]
+        self.assertIn("failed:\nTraceback: KeyError 'weight'", code_text)
+        self.assertIn("day,kg", code_text)
+        for name in CODE_CRITERIA:
+            self.assertEqual(evaluation.metrics[name], 4.0)
         for name in VISUALISATION_CRITERIA:
             self.assertIsNone(evaluation.metrics[name])
         self.assertEqual(len(judge_model.requests), 1)
@@ -321,7 +337,8 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
             judge_model, self.spec(), outcome(python_code="", plot_png=None)
         )
         self.assertEqual(evaluation.metrics["execution_success"], 1.0)
-        self.assertIsNone(evaluation.metrics["code_simplicity"])
+        for name in CODE_CRITERIA:
+            self.assertIsNone(evaluation.metrics[name])
         self.assertEqual(
             evaluation.judgements["readability"], {"skipped": "no plot was produced"}
         )
@@ -330,7 +347,8 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
     def test_out_of_range_score_becomes_judge_error(self) -> None:
         judge_model = ScriptedJudgeModel(code_score=7)
         evaluation = self.evaluate(judge_model, self.spec(), outcome())
-        self.assertIsNone(evaluation.metrics["code_simplicity"])
+        for name in CODE_CRITERIA:
+            self.assertIsNone(evaluation.metrics[name])
         self.assertEqual(evaluation.metrics["readability"], 3.0)
         self.assertEqual(len(evaluation.judge_errors), 1)
         self.assertIn("code judge failed", evaluation.judge_errors[0])
@@ -343,6 +361,18 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
             all(evaluation.metrics[n] is None for n in ALL_METRIC_NAMES[1:])
         )
         self.assertEqual(len(evaluation.judge_errors), 2)
+
+
+class CheckModelTest(unittest.TestCase):
+    def test_preflight_uses_structured_output(self) -> None:
+        judge_model = ScriptedJudgeModel()
+        LLMJudge(load_judge_config(), model=judge_model.model).check_model()
+        self.assertEqual(len(judge_model.requests), 1)
+
+    def test_preflight_failure_propagates(self) -> None:
+        judge = LLMJudge(load_judge_config(), model=ScriptedJudgeModel(fail=True).model)
+        with self.assertRaises(RuntimeError):
+            judge.check_model()
 
 
 class DescribeTableTest(unittest.TestCase):
@@ -358,6 +388,50 @@ class DescribeTableTest(unittest.TestCase):
         self.assertTrue(text.endswith("a,b\n1,2\n"))
 
 
+class ProfileTableTest(unittest.TestCase):
+    def test_small_table_is_shown_whole_with_raw_values(self) -> None:
+        content = 'Datum,Typ,Saldo\n01. Jan 26,Zinsen,"60.394,59 €"\n'.encode()
+        text = profile_table(content, "x.csv", sample_rows=100, max_chars=10000)
+        self.assertIn("1 data rows, 3 columns.", text)
+        self.assertIn("- Saldo: dtype object, 0 missing, 1 distinct", text)
+        self.assertIn("All rows", text)
+        self.assertIn('0,01. Jan 26,Zinsen,"60.394,59 €"', text)
+
+    def test_low_cardinality_columns_list_their_values(self) -> None:
+        content = b"Typ,x\nZinsen,1\nErtrag,2\nZinsen,\n"
+        text = profile_table(content, "x.csv", sample_rows=100, max_chars=10000)
+        self.assertIn("- Typ: dtype object, 0 missing, 2 distinct; values: ", text)
+        self.assertIn("'Zinsen' (2), 'Ertrag' (1)", text)
+        self.assertIn("- x: dtype float64, 1 missing", text)
+
+    def test_large_table_shows_edges_and_a_fixed_random_sample(self) -> None:
+        content = ("value\n" + "".join(f"v{i}\n" for i in range(1000))).encode()
+        text = profile_table(content, "x.csv", sample_rows=100, max_chars=100000)
+        self.assertEqual(
+            text, profile_table(content, "x.csv", sample_rows=100, max_chars=100000)
+        )
+        self.assertNotIn("values:", text)  # 1000 distinct values are not listed
+        rows = text.split("row,value\n")[1].strip().splitlines()
+        positions = [int(row.split(",")[0]) for row in rows]
+        self.assertEqual(len(positions), 110)
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(positions[:5], [0, 1, 2, 3, 4])
+        self.assertEqual(positions[-5:], [995, 996, 997, 998, 999])
+        self.assertIn(f"{positions[50]},v{positions[50]}", rows)
+
+    def test_excel_input(self) -> None:
+        buffer = io.BytesIO()
+        pd.DataFrame({"kg": [80.0, 81.5]}).to_excel(buffer, index=False)
+        text = profile_table(buffer.getvalue(), "x.xlsx", 100, max_chars=10000)
+        self.assertIn("2 data rows, 1 columns.", text)
+        self.assertIn("1,81.5", text)
+
+    def test_truncates_at_max_chars(self) -> None:
+        content = ("value\n" + "".join(f"v{i}\n" for i in range(1000))).encode()
+        text = profile_table(content, "x.csv", sample_rows=100, max_chars=50)
+        self.assertIn("[... truncated: showing the first 50 of", text)
+
+
 class RunExperimentTest(MlflowTestCase):
     def test_logs_scored_run_with_artifacts(self) -> None:
         test_data_dir, ground_truth_dir = make_experiment_dir(
@@ -370,7 +444,7 @@ class RunExperimentTest(MlflowTestCase):
                 LLMJudge(load_judge_config(), model=judge_model.model)
             ),
             analyser_config={"model": "gemma4:latest", "model_provider": "ollama"},
-            judge_model="openai:gpt-6.1-sol",
+            judge_model="openai-responses:gpt-6.1-sol",
             judge_config_sha="abc",
         )
         with mock.patch(
@@ -386,6 +460,7 @@ class RunExperimentTest(MlflowTestCase):
         run = self.only_run("analyser/weight")
         self.assertEqual(set(run.data.metrics), set(ALL_METRIC_NAMES))
         self.assertEqual(run.data.metrics["code_simplicity"], 4.0)
+        self.assertEqual(run.data.metrics["code_correctness"], 4.0)
         self.assertEqual(run.data.params["analyser_model"], "gemma4:latest")
         self.assertEqual(run.data.params["ground_truth"], "none")
         self.assertEqual(run.data.params["judge_config_sha"], "abc")
