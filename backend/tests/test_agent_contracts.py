@@ -414,6 +414,9 @@ class ExecutionDataContracts(unittest.TestCase):
     def test_unsafe_analysis_code_is_rejected_before_execution(self) -> None:
         programs = (
             "import os\nos.system('echo unsafe')",
+            "import os\nos.remove('data.csv')",
+            "import os\nkey = os.environ['OPENAI_API_KEY']",
+            "from os import system\nsystem('echo unsafe')",
             "from subprocess import run\nrun(['echo', 'unsafe'])",
             "open('secret.txt').read()",
             "eval('1 + 1')",
@@ -464,6 +467,7 @@ class ExecutionDataContracts(unittest.TestCase):
             "import matplotlib.pyplot as plt\nplt.plot(df['value'])",
             "import seaborn as sns\nsns.histplot(data=df, x='value')",
             "import numpy as np\nresult = np.mean(df['value'])",
+            "import pandas as pd\nresult = pd.to_datetime(df['value'], format='%Y')",
             "from sklearn.preprocessing import StandardScaler\n"
             "model = StandardScaler()",
             "import statsmodels.api as sm\nmodel = sm.OLS(df['value'], df[['value']])",
@@ -526,6 +530,57 @@ class ExecutionDataContracts(unittest.TestCase):
             self.assertIsNone(result.error_message)
             self.assertEqual(result.df_file_path, csv_path)
             self.assertIn("2.0", csv_path.read_text())
+
+    def test_os_path_output_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plot_path = Path(directory) / "plots" / "plot.png"
+            program = (
+                "import os\n"
+                "import matplotlib.pyplot as plt\n"
+                f"os.makedirs(os.path.join({directory!r}, 'plots'), exist_ok=True)\n"
+                f"plot_path = os.path.join({directory!r}, 'plots', 'plot.png')\n"
+                "plt.plot(df['value'])\n"
+                "plt.savefig(plot_path)\n"
+                "plt.close()\n"
+            )
+            with patch(
+                "src.server.plot_server.pd.read_csv",
+                return_value=pd.DataFrame({"value": [1, 2, 3]}),
+            ):
+                result = execute_python_code(
+                    AnalyserResponse(python_code=program, code_summary="summary"),
+                    Path("data.csv"),
+                    None,
+                    output_dir=Path(directory),
+                )
+            self.assertIsNone(result.error_message)
+            self.assertTrue(plot_path.is_file())
+
+    def test_unset_output_paths_are_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plot_path = Path(directory) / "plot.png"
+            program = (
+                "import matplotlib.pyplot as plt\n"
+                "plt.plot(df['value'])\n"
+                f"plot_path = {str(plot_path)!r}\n"
+                "plt.savefig(plot_path)\n"
+                "plt.close()\n"
+                "df_file_path = ''\n"
+            )
+            with patch(
+                "src.server.plot_server.pd.read_csv",
+                return_value=pd.DataFrame({"value": [1, 2, 3]}),
+            ):
+                result = execute_python_code(
+                    AnalyserResponse(python_code=program, code_summary="summary"),
+                    Path("data.csv"),
+                    None,
+                    output_dir=Path(directory),
+                )
+            self.assertIsNone(result.error_message)
+            self.assertEqual(result.plot_path, plot_path)
+            self.assertIsNone(result.df_file_path)
+            self.assertIsNone(result.model_dump(mode="json")["df_file_path"])
 
     def test_invalid_syntax_returns_an_error_without_execution(self) -> None:
         with (

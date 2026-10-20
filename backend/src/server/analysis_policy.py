@@ -21,6 +21,7 @@ ALLOWED_MODULES = frozenset(
     sktime.forecasting.naive sktime.forecasting.exp_smoothing
     sktime.forecasting.theta sktime.forecasting.trend sktime.forecasting.compose
     sktime.forecasting.model_selection sktime.performance_metrics.forecasting
+    os os.path
     """.split()
 )
 
@@ -81,6 +82,7 @@ ALLOWED_ATTRIBUTES = frozenset(
     TransformedTargetForecaster temporal_train_test_split
     mean_absolute_percentage_error predict_interval predict_quantiles
     default_rng normal uniform integers choice
+    path basename dirname splitext abspath normpath exists isfile isdir makedirs
     """.split()
 )
 
@@ -180,7 +182,12 @@ class AnalysisValidator(ast.NodeVisitor):
             raise ValueError(
                 f"Unsafe analysis code: {type(node).__name__} is not allowed"
             )
-        for field in ("id", "arg", "asname", "name"):
+        # Keyword argument names (e.g. format=...) only bind parameters of the
+        # callee and cannot reach builtins, so they are not name-checked.
+        fields = (
+            () if isinstance(node, ast.keyword) else ("id", "arg", "asname", "name")
+        )
+        for field in fields:
             value = getattr(node, field, None)
             if isinstance(value, str) and (
                 value.startswith("_")

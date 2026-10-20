@@ -1,7 +1,8 @@
+import re
 import traceback
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pandas as pd
 from src.server.analysis_policy import (
@@ -64,9 +65,9 @@ def execute_python_code(
         context["_save_output"] = partial(save_output, output_dir)
         exec(code, context)
         return AnalyserResult(
-            df_file_path=cast(Path | None, context["df_file_path"]),
+            df_file_path=_output_path(context["df_file_path"]),
             data_file_path=data_file_path or downloaded_data_file_path,
-            plot_path=cast(Path | None, context["plot_path"]),
+            plot_path=_output_path(context["plot_path"]),
             code_summary=analyser_response.code_summary,
             python_code=analyser_response.python_code,
             error_message=None,
@@ -82,9 +83,45 @@ def execute_python_code(
         )
 
 
+# Text columns with at most this many distinct values get all values listed, so
+# unexpected categories (typos, truncated values) are visible.
+MAX_LISTED_VALUES = 20
+# Datasets with at most this many rows are shown whole; larger ones as the first
+# and last SAMPLE_EDGE_ROWS rows plus SAMPLE_RANDOM_ROWS random rows.
+MAX_FULL_ROWS = 60
+SAMPLE_EDGE_ROWS = 10
+SAMPLE_RANDOM_ROWS = 30
+# Share of a text column's values that must look like numbers/dates for the
+# column to be described as numeric/date text; the rest is listed as unexpected.
+TEXT_KIND_SHARE = 0.8
+
+_MONTHS = "jan|feb|m[aä]r|apr|ma[iy]|jun|jul|aug|sep|o[ck]t|nov|de[cz]"
+_DATE_TEXT = re.compile(
+    rf"^(\d{{1,4}}[./-]\d{{1,2}}[./-]\d{{1,4}}"
+    rf"|\d{{1,2}}\.?\s*({_MONTHS})[a-zä]*\.?\s*\d{{2,4}}"
+    rf"|({_MONTHS})[a-z]*\.?\s+\d{{1,2}},?\s+\d{{2,4}})"
+    r"([ T]\d{1,2}:\d{2}(:\d{2})?)?",
+    re.IGNORECASE,
+)
+_UNITS = re.compile(r"€|\$|£|%|\b(?:EUR|USD|CHF|GBP)\b", re.IGNORECASE)
+_NUMBER_TEXT = re.compile(r"^[+-]?\d[\d.,' ]*$")
+
+
+def _output_path(value: object) -> Path | None:
+    """Turns an output path the analysis code assigned into a Path, or None if it
+    left the variable unset (empty string) - pydantic would otherwise turn ""
+    into Path("."), which clients then try to download."""
+    return Path(str(value)) if value else None
+
+
 def get_dataset_metadata(data_file_path: Path | None) -> str:
     """
-    Build a string containing metadata about the dataset.
+    Build a description of the dataset for the analyser's system prompt, so the
+    generated code fits the data as it is actually loaded: per column the pandas
+    dtype of `df` and what the values really are (e.g. an object column of
+    numbers formatted as "60.394,59 €" or of dates like "01. Jan 26"), values
+    that don't fit the column, missing values, all values of low-cardinality
+    columns, and sample rows in file order.
 
     param data_file_path: Path to the data file
     return: Formatted string of dataset metadata
@@ -94,40 +131,113 @@ def get_dataset_metadata(data_file_path: Path | None) -> str:
 
     df = pd.read_csv(data_file_path)
 
-    # Basic info
     info_lines = [
         f"DATASET INFOS for file {data_file_path}:",
         "========================================",
-        f"Shape: {df.shape[0]} rows x {df.shape[1]} columns\n\n",
-        f"Exact column names: {list(df.columns)} \n\n",
-        "COLUMN DETAILS:\n\n",
+        f"Shape: {df.shape[0]} rows x {df.shape[1]} columns",
+        f"Exact column names: {list(df.columns)}",
+        "",
+        "COLUMNS (pandas dtype of `df` as loaded, then what the values are):",
     ]
-
-    # Column names and types
-    info_lines.append("Column names and types:")
-    for col, dtype in df.dtypes.items():
-        info_lines.append(f"  - {col}: {dtype}")
-
-    # Missing values
-    missing = df.isnull().sum()
-    info_lines.append("Missing values per column:")
-    for col, miss in missing.items():
-        info_lines.append(f"  - {col}: {miss}")
-
-    # Basic statistics for numeric columns
-    numeric_cols = df.select_dtypes(include="number").columns
-    if len(numeric_cols) > 0:
-        info_lines.append("\nBasic statistics for numeric columns:")
-        stats = df[numeric_cols].describe()
-        info_lines.append(stats.to_string())
-
-    # Include head, tail, and some random samples of the dataset
-    info_lines.append("SAMPLE DATA:\n\n")
-    info_lines.append("\nFirst 50 rows:")
-    info_lines.append(df.head(50).to_string(index=False))
-    info_lines.append("\nLast 50 rows:")
-    info_lines.append(df.tail(50).to_string(index=False))
-    info_lines.append("\nRandom 50 rows:")
-    info_lines.append(df.sample(50).to_string(index=False))
-
+    info_lines += [_describe_column(str(name), df[name]) for name in df.columns]
+    info_lines += ["", _sample_rows(df)]
     return "\n".join(info_lines)
+
+
+def _describe_column(name: str, column: pd.Series) -> str:
+    values = column.dropna()
+    missing = len(column) - len(values)
+    line = f"  - {name}: dtype {column.dtype}, {missing} missing, "
+    line += f"{values.nunique()} distinct"
+
+    if pd.api.types.is_bool_dtype(column):
+        line += "; boolean"
+    elif pd.api.types.is_numeric_dtype(column):
+        line += f"; numbers from {values.min()} to {values.max()}"
+        if (
+            pd.api.types.is_float_dtype(column)
+            and len(values)
+            and bool((values == values.round()).all())
+        ):
+            line += " (whole numbers, float only because of missing values)"
+    else:
+        line += "; " + _describe_text(values.astype(str))
+    return line
+
+
+def _describe_text(values: pd.Series) -> str:
+    """Says what an object column's values are: date text, number text (with
+    its separators and units) or plain text, plus values that don't fit."""
+    if values.empty:
+        return "no values"
+    stripped = values.str.replace(_UNITS, "", regex=True).str.strip()
+    is_date = values.str.strip().str.match(_DATE_TEXT)
+    is_number = ~is_date & stripped.str.match(_NUMBER_TEXT)
+
+    if is_date.mean() >= TEXT_KIND_SHARE:
+        kind, fits = "dates/times stored as text", is_date
+        hint = "parse with pd.to_datetime and an explicit format matching them"
+    elif is_number.mean() >= TEXT_KIND_SHARE:
+        kind, fits = "numbers stored as text", is_number
+        units = sorted(
+            {u.upper() for u in values.str.findall(_UNITS).explode().dropna()}
+        )
+        hint = _number_format(stripped[is_number])
+        if units:
+            hint += f"; contains units/symbols {units}"
+        hint += "; convert to numbers before calculating"
+    elif values.nunique() <= MAX_LISTED_VALUES:
+        counts = values.value_counts()
+        return "text, all values: " + ", ".join(
+            f"{value!r} ({count})" for value, count in counts.items()
+        )
+    else:
+        return f"text, e.g. {_examples(values)}"
+
+    description = f"{kind}, e.g. {_examples(values[fits])}; {hint}"
+    unexpected = values[~fits].value_counts()
+    if not unexpected.empty:
+        description += "; UNEXPECTED values that don't match this format: " + (
+            ", ".join(f"{v!r} ({c})" for v, c in unexpected.head(5).items())
+        )
+    return description
+
+
+def _number_format(numbers: pd.Series) -> str:
+    # A value with both separators shows which one is the decimal separator.
+    both = numbers[numbers.str.contains(".", regex=False) & numbers.str.contains(",")]
+    if not both.empty:
+        value = str(both.iloc[0])
+        decimal = "," if value.rfind(",") > value.rfind(".") else "."
+        thousands = "." if decimal == "," else ","
+        return f"decimal separator {decimal!r}, thousands separator {thousands!r}"
+    if numbers.str.contains(",").any():
+        return "uses ',' as decimal or thousands separator (check the examples)"
+    return "decimal separator '.'"
+
+
+def _examples(values: pd.Series) -> str:
+    return ", ".join(repr(v) for v in values.drop_duplicates().head(3))
+
+
+def _sample_rows(df: pd.DataFrame) -> str:
+    """All rows of small datasets; otherwise the first and last rows plus a
+    fixed random sample, in file order with their row number, so the order of
+    the data (e.g. newest first) is visible."""
+    if len(df) <= MAX_FULL_ROWS:
+        return "ALL ROWS (row = 0-based position in the file):\n" + df.to_string()
+    middle = df.iloc[SAMPLE_EDGE_ROWS:-SAMPLE_EDGE_ROWS].sample(
+        n=SAMPLE_RANDOM_ROWS, random_state=0
+    )
+    positions = sorted(
+        [
+            *range(SAMPLE_EDGE_ROWS),
+            *middle.index,
+            *range(len(df) - SAMPLE_EDGE_ROWS, len(df)),
+        ]
+    )
+    return (
+        f"SAMPLE ROWS: first {SAMPLE_EDGE_ROWS}, {SAMPLE_RANDOM_ROWS} random and "
+        f"last {SAMPLE_EDGE_ROWS}, in file order (row = 0-based position in the "
+        "file):\n" + df.loc[positions].to_string()
+    )

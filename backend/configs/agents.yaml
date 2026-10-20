@@ -170,7 +170,8 @@ analyser:
     - Import all libraries you use, including pandas as pd and matplotlib.pyplot as plt;
       these imports are NOT provided in the execution namespace. Only the listed analysis
       libraries and approved submodules/APIs are allowed; scikit-learn imports as sklearn.
-      No standard-library imports (including os/pathlib), file reads, downloads, eval,
+      No standard-library imports except os for path handling (os.path.join,
+      os.makedirs; other os functions are blocked), no file reads, downloads, eval,
       exec, reflection, private attributes, classes, decorators, or while loops are allowed.
       Use literal strings for paths and vectorized operations for data analysis.
       Use boolean indexing rather than DataFrame.query or DataFrame.eval.
@@ -331,7 +332,8 @@ code_repair:
     - Import all libraries you use, including pandas as pd and matplotlib.pyplot as plt;
       these imports are NOT provided in the execution namespace. Only the listed analysis
       libraries and approved submodules/APIs are allowed; scikit-learn imports as sklearn.
-      No standard-library imports (including os/pathlib), file reads, downloads, eval,
+      No standard-library imports except os for path handling (os.path.join,
+      os.makedirs; other os functions are blocked), no file reads, downloads, eval,
       exec, reflection, private attributes, classes, decorators, or while loops are allowed.
       Use literal strings for paths and vectorized operations for data analysis.
       Use boolean indexing rather than DataFrame.query or DataFrame.eval.
