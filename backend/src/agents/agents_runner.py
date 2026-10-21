@@ -10,7 +10,8 @@ from src.agents.agents_factory import AgentsFactory
 from src.server.download_server import (
     handle_data_download,
 )
-from src.server.plot_server import execute_python_code, get_dataset_metadata
+from src.server.dataset_metadata import get_dataset_metadata
+from src.server.plot_server import execute_python_code
 from src.utils.data_models import (
     AgentResult,
     AnalyserResponse,
