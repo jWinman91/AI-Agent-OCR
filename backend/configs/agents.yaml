@@ -114,9 +114,6 @@ data_extractor:
 analyser:
   model: "gemma4:latest"
   model_provider: "ollama"
-  model_settings:
-    temperature: 0.01
-    top_p: 1
   system_prompt_user: |
     **ANALYSIS TASK**
       - If the user prompt requests data analysis, perform the necessary computations
@@ -168,13 +165,18 @@ analyser:
       never locals(), globals(), or DataFrame truthiness (`if df`, `df or df_download`).
       Use metadata to choose the relevant dataset and work on a copy.
     - Import all libraries you use, including pandas as pd and matplotlib.pyplot as plt;
-      these imports are NOT provided in the execution namespace. Only the listed analysis
-      libraries and approved submodules/APIs are allowed; scikit-learn imports as sklearn.
-      No standard-library imports except os for path handling (os.path.join,
-      os.makedirs; other os functions are blocked), no file reads, downloads, eval,
-      exec, reflection, private attributes, classes, decorators, or while loops are allowed.
-      Use literal strings for paths and vectorized operations for data analysis.
-      Use boolean indexing rather than DataFrame.query or DataFrame.eval.
+      these imports are NOT provided in the execution namespace. You may use the public
+      API of pandas, polars, numpy, scipy, matplotlib, seaborn, scikit-learn (import as
+      sklearn), statsmodels and sktime, and the standard-library modules math,
+      statistics, datetime, calendar, collections, itertools, functools, re, json,
+      random, decimal, string and os.path (os only for os.path and os.makedirs).
+      Blocked: reading files or downloading data (read_*, load, datasets modules),
+      writing files other than the CSV/PNG outputs, eval/query and statsmodels formula
+      strings (use sm.OLS etc. with arrays), str.format with "{{0.attr}}" lookups,
+      private (_-prefixed) names, classes, decorators, while loops, and assigning
+      attributes of modules or classes. Built-in matplotlib style names are allowed in
+      plt.style.use, but not style file paths or URLs.
+      Use vectorized operations for data analysis and boolean indexing for filtering.
     - The program runs from the beginning on every attempt. Variables and DataFrame
       changes from a failed attempt are not available to a repair attempt.
       This is a fresh namespace, not a separate process or filesystem sandbox;
@@ -229,6 +231,7 @@ analyser:
         - matplotlib
         - seaborn
         - numpy
+        - scipy
         - scikit-learn
         - statsmodels
         - sktime (for time series forecasting)
@@ -330,13 +333,18 @@ code_repair:
       never locals(), globals(), or DataFrame truthiness (`if df`, `df or df_download`).
       Use metadata to choose the relevant dataset and work on a copy.
     - Import all libraries you use, including pandas as pd and matplotlib.pyplot as plt;
-      these imports are NOT provided in the execution namespace. Only the listed analysis
-      libraries and approved submodules/APIs are allowed; scikit-learn imports as sklearn.
-      No standard-library imports except os for path handling (os.path.join,
-      os.makedirs; other os functions are blocked), no file reads, downloads, eval,
-      exec, reflection, private attributes, classes, decorators, or while loops are allowed.
-      Use literal strings for paths and vectorized operations for data analysis.
-      Use boolean indexing rather than DataFrame.query or DataFrame.eval.
+      these imports are NOT provided in the execution namespace. You may use the public
+      API of pandas, polars, numpy, scipy, matplotlib, seaborn, scikit-learn (import as
+      sklearn), statsmodels and sktime, and the standard-library modules math,
+      statistics, datetime, calendar, collections, itertools, functools, re, json,
+      random, decimal, string and os.path (os only for os.path and os.makedirs).
+      Blocked: reading files or downloading data (read_*, load, datasets modules),
+      writing files other than the CSV/PNG outputs, eval/query and statsmodels formula
+      strings (use sm.OLS etc. with arrays), str.format with "{{0.attr}}" lookups,
+      private (_-prefixed) names, classes, decorators, while loops, and assigning
+      attributes of modules or classes. Built-in matplotlib style names are allowed in
+      plt.style.use, but not style file paths or URLs.
+      Use vectorized operations for data analysis and boolean indexing for filtering.
     - The program runs from the beginning on every attempt. Variables and DataFrame
       changes from a failed attempt are not available to a repair attempt.
       This is a fresh namespace, not a separate process or filesystem sandbox;
@@ -358,8 +366,8 @@ code_repair:
 
     **LIBRARIES AND DATA RULES**
     Do not download or invent data.
-    Allowed libraries: pandas, polars, matplotlib, seaborn, numpy, scikit-learn,
-    statsmodels, and sktime. Import every library used.
+    Allowed libraries: pandas, polars, matplotlib, seaborn, numpy, scipy,
+    scikit-learn, statsmodels, and sktime. Import every library used.
 
     **DATASETS**
     Extracted dataset, already loaded as `df` if available:
