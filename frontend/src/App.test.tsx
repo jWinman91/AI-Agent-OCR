@@ -22,7 +22,7 @@ beforeEach(() => {
             model: 'gpt-5',
             model_provider: 'openai',
             model_settings: { temperature: 0.01, top_p: 1 },
-            system_prompt_user: 'Extract accurately.',
+            domain_knowledge_prompt: 'Extract accurately.',
           }),
         )
       if (url.includes('get_model_providers'))
@@ -107,7 +107,7 @@ it('streams model pull progress and opens the workspace after readiness is confi
         return new Response(JSON.stringify({
           model: 'gemma4:latest',
           model_provider: 'ollama',
-          system_prompt_user: 'Extract accurately.',
+          domain_knowledge_prompt: 'Extract accurately.',
         }))
       if (url.includes('get_model_providers')) return new Response(JSON.stringify(['ollama']))
       if (url.includes('get_models')) return new Response(JSON.stringify(['gemma4:latest']))
@@ -290,7 +290,7 @@ it('edits and saves bounded sampling settings for both Ollama agent forms', asyn
           model: 'gemma4:latest',
           model_provider: 'ollama',
           model_settings: {},
-          system_prompt_user: 'Extract accurately.',
+          domain_knowledge_prompt: 'Extract accurately.',
         }))
       if (url.includes('get_model_providers'))
         return new Response(JSON.stringify(['openai', 'ollama']))

@@ -29,31 +29,33 @@ class AnalyserRunner:
     def __init__(self, client: AgentClient | None = None) -> None:
         self._client = client or AgentClient()
 
-    def current_system_prompt_user(self) -> str:
-        """Returns the analyser's stored system_prompt_user, so it can be restored
+    def current_domain_knowledge_prompt(self) -> str:
+        """Returns the analyser's stored domain_knowledge_prompt, so it can be restored
         after the experiments.
 
         Returns:
             str: The user-editable part of the analyser's system prompt.
         """
         return str(
-            self._client.get_config("analyser", full_prompt=False)["system_prompt_user"]
+            self._client.get_config("analyser", full_prompt=False)[
+                "domain_knowledge_prompt"
+            ]
         )
 
-    def configure(self, system_prompt_user: str) -> dict[str, Any]:
-        """Sets the analyser's system_prompt_user via /upload_config, keeping the
+    def configure(self, domain_knowledge_prompt: str) -> dict[str, Any]:
+        """Sets the analyser's domain_knowledge_prompt via /upload_config, keeping the
         rest of its stored config (model, provider, settings), and rebuilds the
         backend agents so the next run uses it.
 
         Args:
-            system_prompt_user (str): The experiment's domain knowledge about the
+            domain_knowledge_prompt (str): The experiment's domain knowledge about the
                 use case.
         Returns:
             dict[str, Any]: The resulting analyser config with the full system
             prompt, so the run can log which model and prompt it used.
         """
         config = self._client.get_config("analyser", full_prompt=False)
-        config["system_prompt_user"] = system_prompt_user
+        config["domain_knowledge_prompt"] = domain_knowledge_prompt
         self._client.upload_config("analyser", config)
         self._client.update_agents()
         return self._client.get_config("analyser")

@@ -24,7 +24,7 @@ test.beforeEach(async ({ page }) => {
         json: {
           model: 'gemma4:latest',
           model_provider: 'ollama',
-          system_prompt_user: 'Extract all requested values accurately.',
+          domain_knowledge_prompt: 'Extract all requested values accurately.',
         },
       })
     if (path.includes('download_data'))

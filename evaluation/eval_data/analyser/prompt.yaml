@@ -7,7 +7,7 @@ kontoauszug:
     (make sure to convert the saldo to numerical value first).
     then filter on Zinsen and Ertrag and plot the sum of the transaction amount per month in a time series plot.
     Use the "Datum" column for the x-axis and the sum of the transaction amount for the y-axis.
-  system_prompt_user: |
+  domain_knowledge_prompt: |
     Use the "Datum" column for any date-based analysis or plotting (like a time series).
     The "Datum" values are German dates written as day, month abbreviation and year,
     e.g. "01. Jan 2026" or "01. März 2026". pandas cannot parse given month names since they are custom,
@@ -32,5 +32,5 @@ kontoauszug:
 #  data_file: kontoauszug.csv
 #  ground_truth:
 #  prompt: |
-#  system_prompt_user: |
+#  domain_knowledge_prompt: |
 #

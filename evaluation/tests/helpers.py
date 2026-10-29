@@ -63,7 +63,7 @@ class FakeAgentClient:
         self.config: dict[str, Any] = {
             "model": "gemma4:latest",
             "model_provider": "ollama",
-            "system_prompt_user": "",
+            "domain_knowledge_prompt": "",
         }
 
     def update_agents(self) -> None:
@@ -73,7 +73,9 @@ class FakeAgentClient:
         self.calls.append(f"get_config:{agent_name}:{full_prompt}")
         config = dict(self.config)
         if full_prompt:
-            config["system_prompt_user"] = f"FULL[{config['system_prompt_user']}]"
+            config["domain_knowledge_prompt"] = (
+                f"FULL[{config['domain_knowledge_prompt']}]"
+            )
         return config
 
     def upload_config(self, agent_name: str, config: dict[str, Any]) -> None:

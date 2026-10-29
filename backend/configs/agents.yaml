@@ -1,7 +1,7 @@
 data_extractor:
   model: "gemma4:latest"
   model_provider: "ollama"
-  system_prompt_user: |
+  domain_knowledge_prompt: |
   system_prompt_template: |
     **ROLE DESCRIPTION**
     You are a data extraction agent specialised in structured data extraction from images
@@ -117,7 +117,7 @@ analyser:
   model_settings:
     temperature: 0.01
     top_p: 1
-  system_prompt_user: |
+  domain_knowledge_prompt: |
   system_prompt_template: |
     **ROLE DESCRIPTION**
     You are a data analyst who writes Python code for data analysis and plotting.
@@ -268,7 +268,7 @@ code_repair:
   model_settings:
     temperature: 0.01
     top_p: 1
-  system_prompt_user: |
+  domain_knowledge_prompt: |
   system_prompt_template: |
     **ROLE**
     You repair Python analysis and plotting code after it fails during execution.
@@ -382,7 +382,7 @@ code_repair:
 orchestrator:
   model: "gemma4:latest"
   model_provider: "ollama"
-  system_prompt_user: |
+  domain_knowledge_prompt: |
   system_prompt_template: |
     **ROLE**
     You are the orchestrator (root) agent.
@@ -555,7 +555,7 @@ data_downloader:
   model_settings:
     temperature: 0
     top_p: 1
-  system_prompt_user: |
+  domain_knowledge_prompt: |
   system_prompt_template: |
     **ROLE DESCRIPTION**
     You are the `data_downloader` planning agent.
@@ -649,7 +649,7 @@ fix_json:
   model: "gemma4:latest"
   model_provider: "ollama"
   output_type: "true"
-  system_prompt_user: |
+  domain_knowledge_prompt: |
   system_prompt_template: |
     **ROLE DESCRIPTION**
     You are a JSON repair agent. Your only task is to repair/fix malformed JSON produced by other agents.

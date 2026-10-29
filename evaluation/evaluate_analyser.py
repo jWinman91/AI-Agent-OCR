@@ -5,9 +5,9 @@ data file to analyse (CSV/Excel in eval_data/analyser/), the user prompt to try
 and optionally a ground truth reference from the shared ground_truth/ directory -
 see src/analyser/experiment_spec.py for the format.
 
-For each experiment the analyser's system_prompt_user is set to the entry's one
+For each experiment the analyser's domain_knowledge_prompt is set to the entry's one
 (empty if it has none) via /upload_config, the data file is uploaded to the
-backend and the analyser is run on the prompt. The system_prompt_user stored before
+backend and the analyser is run on the prompt. The domain_knowledge_prompt stored before
 the CLI started is restored afterwards. The run is then scored:
 - execution_success: 1 if the backend reported no error, else 0 (the generated
   code is not executed again),
@@ -206,7 +206,7 @@ def run_experiment(
     spec = load_experiment_spec(experiment_name)
 
     logger.info(f"Running experiment '{experiment_name}' (run '{run_name}')...")
-    analyser_config = context.runner.configure(spec.system_prompt_user)
+    analyser_config = context.runner.configure(spec.domain_knowledge_prompt)
     outcome = context.runner.run(spec.input_file, spec.user_prompt)
     logger.info(
         f"Analyser finished: execution_success={outcome.execution_success}, "
@@ -267,9 +267,9 @@ def main() -> None:
         judge_config_sha=judge_config_sha(),
     )
 
-    # Each experiment overwrites the stored system_prompt_user, so the one the
+    # Each experiment overwrites the stored domain_knowledge_prompt, so the one the
     # user had set (e.g. in the UI) is put back once the experiments are done.
-    original_system_prompt_user = runner.current_system_prompt_user()
+    original_domain_knowledge_prompt = runner.current_domain_knowledge_prompt()
     try:
         if args.experiment_name is None:
             run_all_experiments(
@@ -282,7 +282,7 @@ def main() -> None:
         else:
             run_experiment(args.experiment_name, args.run_name, context)
     finally:
-        runner.configure(original_system_prompt_user)
+        runner.configure(original_domain_knowledge_prompt)
 
 
 if __name__ == "__main__":

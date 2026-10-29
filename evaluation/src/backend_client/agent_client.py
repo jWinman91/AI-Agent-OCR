@@ -86,7 +86,7 @@ class AgentClient:
 
         Args:
             agent_name (AgentName): The agent to get the configuration for.
-            full_prompt (bool): If True, system_prompt_user holds the full built
+            full_prompt (bool): If True, domain_knowledge_prompt holds the full built
                 system prompt; otherwise it holds only the user-editable part, as
                 stored and as upload_config expects it.
         Returns:

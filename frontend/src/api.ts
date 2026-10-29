@@ -19,7 +19,7 @@ export type OllamaPullProgress = {
 export type AgentConfig = {
   model: string
   model_provider: string
-  system_prompt_user: string
+  domain_knowledge_prompt: string
   model_settings?: {
     temperature?: number
     top_p?: number

@@ -48,7 +48,7 @@ class ConfigModelUser(ConfigModelBase):
     Configuration model for fields set by the user.
     """
 
-    system_prompt_user: str
+    domain_knowledge_prompt: str
 
 
 class ConfigModelDB(ConfigModelUser):

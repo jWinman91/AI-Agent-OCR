@@ -9,7 +9,7 @@ from src.utils.data_models import ConfigModelBuild, ConfigModelDB, ConfigModelUs
 
 class ConfigBuilder:
     SYSTEM_PROMPT = "system_prompt"
-    USER_PROMPT = "system_prompt_user"
+    USER_PROMPT = "domain_knowledge_prompt"
     PROMPT_TEMPLATE = "system_prompt_template"
     CONFIG_DB_PATH = Path("config.db")
 
@@ -60,7 +60,7 @@ class ConfigBuilder:
         """
         if full_prompt:
             config = self.build_config()[config_name].model_dump()
-            config["system_prompt_user"] = config.pop("system_prompt")
+            config["domain_knowledge_prompt"] = config.pop("system_prompt")
             config["system_prompt_template"] = ""
         else:
             config = self.SQLITE_HANDLER.get_config(config_name)

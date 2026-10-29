@@ -37,7 +37,7 @@ defaulting to `http://localhost:11434`.
       - model: str
       - model_provider: str
       - mcp_server: str
-      - system_prompt_user: str
+      - domain_knowledge_prompt: str
   - Return: bool (success of update)
 - `/get_config(name: Literal["extractor", "plotter"]) -> ConfigModel`:
   - Purpose: Get config file by name

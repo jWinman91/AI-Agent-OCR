@@ -106,7 +106,7 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
             "model_provider": "ollama",
             "base_url": "http://legacy:11434/v1",
             "system_prompt": "Analyse data",
-            "system_prompt_user": "Analyse data",
+            "domain_knowledge_prompt": "Analyse data",
             "system_prompt_template": "$user_part",
         }
         for config_type in (ConfigModelBuild, ConfigModelDB, ConfigModelUser):

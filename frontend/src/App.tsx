@@ -994,9 +994,9 @@ function AgentForm({ agent }: { agent: AgentName }) {
                 System prompt
                 <textarea
                     rows={13}
-                    value={draft.system_prompt_user}
+                    value={draft.domain_knowledge_prompt}
                     disabled={disabled}
-                    onChange={(event) => change({ system_prompt_user: event.target.value })}
+                    onChange={(event) => change({ domain_knowledge_prompt: event.target.value })}
                 />
             </label>
             {error && <Notice>{error}</Notice>}

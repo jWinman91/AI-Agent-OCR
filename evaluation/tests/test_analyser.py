@@ -65,14 +65,14 @@ def entry(
     prompt: str = "Plot my weight.",
     data_file: str = "weight.csv",
     ground_truth: str | None = None,
-    system_prompt_user: str | None = None,
+    domain_knowledge_prompt: str | None = None,
 ) -> dict[str, str]:
     """A prompt.yaml entry for the weight.csv created by make_experiment_dir."""
     values = {"data_file": data_file, "prompt": prompt}
     if ground_truth is not None:
         values["ground_truth"] = ground_truth
-    if system_prompt_user is not None:
-        values["system_prompt_user"] = system_prompt_user
+    if domain_knowledge_prompt is not None:
+        values["domain_knowledge_prompt"] = domain_knowledge_prompt
     return values
 
 
@@ -115,15 +115,15 @@ class ExperimentSpecTest(unittest.TestCase):
         self.assertEqual(spec.user_prompt, "Plot my weight.")
         self.assertEqual(spec.input_file.name, "weight.csv")
         self.assertIsNone(spec.ground_truth_path)
-        self.assertEqual(spec.system_prompt_user, "")
+        self.assertEqual(spec.domain_knowledge_prompt, "")
 
-    def test_entry_with_system_prompt_user(self) -> None:
-        spec = self.load({"weight": entry(system_prompt_user="Weight is in kg.")})
-        self.assertEqual(spec.system_prompt_user, "Weight is in kg.")
+    def test_entry_with_domain_knowledge_prompt(self) -> None:
+        spec = self.load({"weight": entry(domain_knowledge_prompt="Weight is in kg.")})
+        self.assertEqual(spec.domain_knowledge_prompt, "Weight is in kg.")
 
-    def test_empty_system_prompt_user(self) -> None:
-        spec = self.load({"weight": {**entry(), "system_prompt_user": None}})
-        self.assertEqual(spec.system_prompt_user, "")
+    def test_empty_domain_knowledge_prompt(self) -> None:
+        spec = self.load({"weight": {**entry(), "domain_knowledge_prompt": None}})
+        self.assertEqual(spec.domain_knowledge_prompt, "")
 
     def test_entry_with_ground_truth(self) -> None:
         spec = self.load({"weight": entry(ground_truth="ref.png")})
@@ -241,7 +241,7 @@ class AnalyserRunnerTest(unittest.TestCase):
         assert result.download_error is not None
         self.assertIn("plots/plot.png", result.download_error)
 
-    def test_configure_uploads_system_prompt_user(self) -> None:
+    def test_configure_uploads_domain_knowledge_prompt(self) -> None:
         client = FakeAgentClient(SUCCESS_RESULT)
         config = AnalyserRunner(client).configure("Weight is in kg.")  # type: ignore[arg-type]
         self.assertEqual(
@@ -253,15 +253,15 @@ class AnalyserRunnerTest(unittest.TestCase):
                 "get_config:analyser:True",
             ],
         )
-        self.assertEqual(client.config["system_prompt_user"], "Weight is in kg.")
+        self.assertEqual(client.config["domain_knowledge_prompt"], "Weight is in kg.")
         self.assertEqual(client.config["model"], "gemma4:latest")
-        self.assertEqual(config["system_prompt_user"], "FULL[Weight is in kg.]")
+        self.assertEqual(config["domain_knowledge_prompt"], "FULL[Weight is in kg.]")
 
-    def test_current_system_prompt_user(self) -> None:
+    def test_current_domain_knowledge_prompt(self) -> None:
         client = FakeAgentClient(SUCCESS_RESULT)
-        client.config["system_prompt_user"] = "from the UI"
+        client.config["domain_knowledge_prompt"] = "from the UI"
         runner = AnalyserRunner(client)  # type: ignore[arg-type]
-        self.assertEqual(runner.current_system_prompt_user(), "from the UI")
+        self.assertEqual(runner.current_domain_knowledge_prompt(), "from the UI")
 
 
 class JudgeAndEvaluatorTest(unittest.TestCase):
@@ -463,7 +463,7 @@ class ProfileTableTest(unittest.TestCase):
 class RunExperimentTest(MlflowTestCase):
     def test_logs_scored_run_with_artifacts(self) -> None:
         test_data_dir, ground_truth_dir = make_experiment_dir(
-            self.tmp, {"weight": entry(system_prompt_user="Weight is in kg.")}
+            self.tmp, {"weight": entry(domain_knowledge_prompt="Weight is in kg.")}
         )
         judge_model = ScriptedJudgeModel()
         client = FakeAgentClient(SUCCESS_RESULT)
@@ -485,7 +485,7 @@ class RunExperimentTest(MlflowTestCase):
         ):
             run_experiment("weight", "run1", context)
 
-        self.assertEqual(client.config["system_prompt_user"], "Weight is in kg.")
+        self.assertEqual(client.config["domain_knowledge_prompt"], "Weight is in kg.")
         self.assertLess(
             client.calls.index("upload_config:analyser"),
             client.calls.index("run:analyser"),
@@ -516,7 +516,9 @@ class RunExperimentTest(MlflowTestCase):
         logged_config = yaml.safe_load(
             mlflow.artifacts.load_text(f"runs:/{run.info.run_id}/analyser_config.yaml")
         )
-        self.assertEqual(logged_config["system_prompt_user"], "FULL[Weight is in kg.]")
+        self.assertEqual(
+            logged_config["domain_knowledge_prompt"], "FULL[Weight is in kg.]"
+        )
         judgements = json.loads(
             mlflow.artifacts.load_text(f"runs:/{run.info.run_id}/judge_results.json")
         )
