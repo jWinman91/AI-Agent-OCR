@@ -22,6 +22,13 @@ ResultT = TypeVar("ResultT")
 
 logging.basicConfig(level=logging.INFO)
 
+PREVIOUS_ERROR_SECTION = (
+    "**TRACEBACK OF PREVIOUS ERROR**\n"
+    "The previous attempt failed with the error below. "
+    "Fix its cause and do not repeat the mistake.\n"
+    "{previous_error}\n"
+)
+
 
 class AgentsFactory:
     def __init__(
@@ -55,6 +62,19 @@ class AgentsFactory:
         """
         if args is None:
             return system_prompt
+        # Templates mark where the traceback section goes with {previous_error}.
+        # It is only rendered when there is an error, so the model never reads a
+        # placeholder like "None" as an error to fix.
+        if "previous_error" in args:
+            previous_error = args["previous_error"]
+            args = {
+                **args,
+                "previous_error": PREVIOUS_ERROR_SECTION.format(
+                    previous_error=previous_error
+                )
+                if previous_error
+                else "",
+            }
         return system_prompt.format(**args)
 
     def create_agent(
