@@ -245,4 +245,10 @@ class OutputValidator:
         """
         pattern = rf"<{tag}>(.*?)</{tag}>"
         match = re.search(pattern, text, re.DOTALL)
-        return match.group(1).strip() if match else None
+        if not match:
+            return None
+        # Small models often wrap the content in a markdown fence despite the
+        # prompt; strip one surrounding fence so the code stays executable.
+        content = match.group(1).strip()
+        fenced = re.fullmatch(r"```[\w+-]*[ \t]*\n(.*?)\n?```", content, re.DOTALL)
+        return fenced.group(1).strip() if fenced else content
