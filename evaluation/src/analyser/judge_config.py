@@ -16,9 +16,16 @@ VISUALISATION_CRITERIA = [
     "completeness",
     "readability",
 ]
+# Number of bugs the bug judge found in the generated code.
+BUG_COUNT = "bug_count"
 # Every metric the analyser evaluation logs, in a fixed order: execution
-# success from the backend plus one 1-5 score per judged criterion.
-ALL_METRIC_NAMES = ["execution_success", *CODE_CRITERIA, *VISUALISATION_CRITERIA]
+# success from the backend, one 1-5 score per judged criterion and the bug count.
+ALL_METRIC_NAMES = [
+    "execution_success",
+    *CODE_CRITERIA,
+    *VISUALISATION_CRITERIA,
+    BUG_COUNT,
+]
 
 SCORE_LEVELS = {1, 2, 3, 4, 5}
 
@@ -37,11 +44,16 @@ class CriterionConfig(BaseModel):
         return rubric
 
 
-class JudgeSectionConfig(BaseModel):
-    """One judge: its prompts and the criteria it scores."""
+class JudgePromptConfig(BaseModel):
+    """One judge's prompts."""
 
     system_prompt: str
     user_prompt_template: str
+
+
+class JudgeSectionConfig(JudgePromptConfig):
+    """One scoring judge: its prompts and the criteria it scores."""
+
     criteria: dict[str, CriterionConfig]
 
     def render_rubrics(self) -> str:
@@ -69,6 +81,7 @@ class JudgeConfig(BaseModel):
     retries: int = Field(ge=0)
     code_judge: JudgeSectionConfig
     visualisation_judge: JudgeSectionConfig
+    bug_judge: JudgePromptConfig
 
     @model_validator(mode="after")
     def _check_criteria(self) -> "JudgeConfig":

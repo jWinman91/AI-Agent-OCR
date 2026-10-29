@@ -24,7 +24,14 @@ from src.analyser.experiment_spec import (
     load_experiment_entries,
     load_experiment_spec,
 )
-from src.analyser.judge import LLMJudge, describe_table, profile_table
+from src.analyser.judge import (
+    BugReport,
+    CodeIssue,
+    LLMJudge,
+    describe_table,
+    number_lines,
+    profile_table,
+)
 from src.analyser.judge_config import (
     ALL_METRIC_NAMES,
     CODE_CRITERIA,
@@ -304,6 +311,13 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
         self.assertEqual(
             evaluation.judgements["readability"]["explanation"], "scored 3"
         )
+        self.assertEqual(evaluation.metrics["bug_count"], 1.0)
+        assert evaluation.bug_report is not None
+        self.assertEqual(
+            evaluation.bug_report.to_markdown(),
+            "- Line 1 (wrong_result): Plots nothing.\n",
+        )
+        self.assertEqual(evaluation.judgements["bug_report"]["issues"][0]["line"], 1)
         self.assertEqual(evaluation.judge_errors, [])
 
         # The code judge sees the code, the execution result and the input
@@ -319,6 +333,11 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
         self.assertNotIn("print('plot')", visualisation_parts[0])
         images = [p for p in visualisation_parts if isinstance(p, BinaryContent)]
         self.assertEqual([i.data for i in images], [b"PNG"])
+        # The bug judge sees numbered code lines and the output data.
+        bug_text = user_parts(judge_model.requests[2])[0]
+        self.assertIn("1 | print('plot')", bug_text)
+        self.assertIn("<OUTPUT_DATA>\n1 data rows. Header: a,b", bug_text)
+        self.assertIn("- kg: dtype float64", bug_text)
 
     def test_png_reference_is_attached_as_second_image(self) -> None:
         judge_model = ScriptedJudgeModel()
@@ -357,7 +376,10 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
             self.assertEqual(evaluation.metrics[name], 4.0)
         for name in VISUALISATION_CRITERIA:
             self.assertIsNone(evaluation.metrics[name])
-        self.assertEqual(len(judge_model.requests), 1)
+        bug_text = user_parts(judge_model.requests[1])[0]
+        self.assertIn("failed:\nTraceback: KeyError 'weight'", bug_text)
+        self.assertEqual(evaluation.metrics["bug_count"], 1.0)
+        self.assertEqual(len(judge_model.requests), 2)
 
     def test_no_plot_and_no_code_skip_both_judges(self) -> None:
         judge_model = ScriptedJudgeModel()
@@ -367,10 +389,31 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
         self.assertEqual(evaluation.metrics["execution_success"], 1.0)
         for name in CODE_CRITERIA:
             self.assertIsNone(evaluation.metrics[name])
+        self.assertIsNone(evaluation.metrics["bug_count"])
+        self.assertIsNone(evaluation.bug_report)
         self.assertEqual(
             evaluation.judgements["readability"], {"skipped": "no plot was produced"}
         )
         self.assertEqual(judge_model.requests, [])
+
+    def test_correct_code_has_no_bugs(self) -> None:
+        evaluation = self.evaluate(
+            ScriptedJudgeModel(issues=[]), self.spec(), outcome()
+        )
+        self.assertEqual(evaluation.metrics["bug_count"], 0.0)
+        assert evaluation.bug_report is not None
+        self.assertEqual(evaluation.bug_report.to_markdown(), "No bugs found.\n")
+
+    def test_invalid_bug_line_becomes_judge_error(self) -> None:
+        judge_model = ScriptedJudgeModel(
+            issues=[{"line": 0, "kind": "error", "reason": "x"}]
+        )
+        evaluation = self.evaluate(judge_model, self.spec(), outcome())
+        self.assertIsNone(evaluation.metrics["bug_count"])
+        self.assertIsNone(evaluation.bug_report)
+        self.assertEqual(evaluation.metrics["code_correctness"], 4.0)
+        self.assertEqual(len(evaluation.judge_errors), 1)
+        self.assertIn("bug judge failed", evaluation.judge_errors[0])
 
     def test_out_of_range_score_becomes_judge_error(self) -> None:
         judge_model = ScriptedJudgeModel(code_score=7)
@@ -388,7 +431,28 @@ class JudgeAndEvaluatorTest(unittest.TestCase):
         self.assertTrue(
             all(evaluation.metrics[n] is None for n in ALL_METRIC_NAMES[1:])
         )
-        self.assertEqual(len(evaluation.judge_errors), 2)
+        self.assertEqual(len(evaluation.judge_errors), 3)
+
+
+class BugReportTest(unittest.TestCase):
+    def test_number_lines_pads_to_widest_number(self) -> None:
+        code = "\n".join(f"x = {i}" for i in range(10))
+        numbered = number_lines(code).splitlines()
+        self.assertEqual(numbered[0], " 1 | x = 0")
+        self.assertEqual(numbered[9], "10 | x = 9")
+
+    def test_markdown_is_sorted_by_line(self) -> None:
+        report = BugReport(
+            issues=[
+                CodeIssue(line=12, kind="wrong_result", reason="Wrong sign."),
+                CodeIssue(line=3, kind="error", reason="Column 'Date' missing."),
+            ]
+        )
+        self.assertEqual(
+            report.to_markdown(),
+            "- Line 3 (error): Column 'Date' missing.\n"
+            "- Line 12 (wrong_result): Wrong sign.\n",
+        )
 
 
 class CheckModelTest(unittest.TestCase):
@@ -508,6 +572,7 @@ class RunExperimentTest(MlflowTestCase):
                 "output_data.csv",
                 "analyser_code.py",
                 "code_summary.txt",
+                "bug_report.md",
                 "judge_results.json",
                 "analyser_config.yaml",
                 "judge_config.yaml",

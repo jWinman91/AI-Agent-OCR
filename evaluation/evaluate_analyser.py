@@ -15,7 +15,10 @@ the CLI started is restored afterwards. The run is then scored:
   execution result and a profile of the input data, whenever there is code,
 - data_correctness, task_relevance, chart_suitability, completeness,
   readability: judged from the plot, the request, the input data and the
-  reference, only if execution succeeded and a plot exists (NaN otherwise).
+  reference, only if execution succeeded and a plot exists (NaN otherwise),
+- bug_count: the number of bugs a bug judge finds in the code, whenever there
+  is code. Each bug is reported with its line in analyser_code.py and a short
+  reason (error or wrong result) in the bug_report.md artifact and the console.
 The judge model, prompts and 1-5 rubrics live in src/analyser/judge_config.yaml;
 the judge reads OPENAI_API_KEY from the environment.
 
@@ -127,6 +130,8 @@ def write_artifacts(
     ]
     if errors:
         write("error.txt", "\n\n".join(errors))
+    if evaluation.bug_report is not None:
+        write("bug_report.md", evaluation.bug_report.to_markdown())
     write("judge_results.json", json.dumps(evaluation.judgements, indent=2))
     write("analyser_config.yaml", yaml.safe_dump(analyser_config, sort_keys=False))
 
@@ -225,6 +230,10 @@ def run_experiment(
         f"\nExperiment '{experiment_name}', run '{run_name}' complete: {scores}. "
         f"Logged to MLflow."
     )
+    if evaluation.bug_report is not None:
+        print(
+            f"Bugs found in the analyser code:\n{evaluation.bug_report.to_markdown()}"
+        )
 
 
 def main() -> None:

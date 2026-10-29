@@ -1,13 +1,14 @@
 """Turns one analyser run into metrics: execution success from the backend plus
-LLM judge scores for the code and, if a plot exists, the visualisation."""
+LLM judge scores for the code and, if a plot exists, the visualisation, and a
+line-by-line bug report of the code."""
 
 from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
 from src.analyser.experiment_spec import AnalyserExperimentSpec
-from src.analyser.judge import LLMJudge
-from src.analyser.judge_config import CODE_CRITERIA, VISUALISATION_CRITERIA
+from src.analyser.judge import BugReport, LLMJudge
+from src.analyser.judge_config import BUG_COUNT, CODE_CRITERIA, VISUALISATION_CRITERIA
 from src.analyser.run_analyser import AnalyserRunOutcome
 
 
@@ -20,6 +21,8 @@ class AnalyserEvaluation:
     judgements: dict[str, Any] = field(default_factory=dict)
     # One message per judge call that failed (API error, invalid output, ...).
     judge_errors: list[str] = field(default_factory=list)
+    # The code's bugs by line; None if there was no code or the bug judge failed.
+    bug_report: BugReport | None = None
 
 
 class AnalyserEvaluator:
@@ -42,7 +45,7 @@ class AnalyserEvaluator:
         evaluation = AnalyserEvaluation(
             metrics={"execution_success": float(outcome.execution_success)}
         )
-        for name in CODE_CRITERIA + VISUALISATION_CRITERIA:
+        for name in CODE_CRITERIA + VISUALISATION_CRITERIA + [BUG_COUNT]:
             evaluation.metrics[name] = None
 
         # Code is judged whenever there is any, including the failed code of a
@@ -78,6 +81,25 @@ class AnalyserEvaluator:
                 self._record(evaluation, visualisation_judgement.model_dump())
             except Exception as e:
                 self._fail(evaluation, VISUALISATION_CRITERIA, "visualisation judge", e)
+
+        # Like the code judge, the bug judge also runs on failed code, where
+        # finding the root cause matters most.
+        if not outcome.python_code:
+            self._skip(evaluation, ["bug_report"], "no code was generated")
+        else:
+            try:
+                evaluation.bug_report = self._judge.judge_bugs(
+                    spec.user_prompt,
+                    outcome.code_summary,
+                    outcome.python_code,
+                    spec.input_file,
+                    outcome.error_message,
+                    outcome.output_csv,
+                )
+                evaluation.metrics[BUG_COUNT] = float(len(evaluation.bug_report.issues))
+                evaluation.judgements["bug_report"] = evaluation.bug_report.model_dump()
+            except Exception as e:
+                self._fail(evaluation, ["bug_report"], "bug judge", e)
 
         return evaluation
 

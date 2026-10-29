@@ -1,10 +1,10 @@
 """LLM-as-a-judge for the analyser agent: one call scores the generated code, one
-(vision) call scores the plot."""
+(vision) call scores the plot, and one call lists the code's bugs by line."""
 
 import io
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -33,6 +33,42 @@ class PreflightCheck(BaseModel):
 class CodeJudgement(BaseModel):
     code_simplicity: CriterionJudgement
     code_correctness: CriterionJudgement
+
+
+class CodeIssue(BaseModel):
+    line: int = Field(
+        ge=1,
+        description=(
+            "Line number in <CODE> where the bug is (the first line if it spans "
+            "several)."
+        ),
+    )
+    kind: Literal["error", "wrong_result"] = Field(
+        description=(
+            '"error" if it makes the code fail, "wrong_result" if the code runs '
+            "but this gives a wrong or incomplete result."
+        )
+    )
+    reason: str = Field(description="One short sentence: what is wrong and why.")
+
+
+class BugReport(BaseModel):
+    issues: list[CodeIssue] = Field(
+        description="Every bug found, in line order; empty if the code is correct."
+    )
+
+    def to_markdown(self) -> str:
+        """Renders the issues as brief bullet points, one per bug.
+
+        Returns:
+            str: Markdown bullet list, or a note that no bugs were found.
+        """
+        if not self.issues:
+            return "No bugs found.\n"
+        return "".join(
+            f"- Line {issue.line} ({issue.kind}): {issue.reason}\n"
+            for issue in sorted(self.issues, key=lambda issue: issue.line)
+        )
 
 
 class VisualisationJudgement(BaseModel):
@@ -133,6 +169,22 @@ def profile_table(
     return _truncate("\n".join(lines), max_chars)
 
 
+def number_lines(code: str) -> str:
+    """Prefixes every line of the code with its 1-based line number, so the bug
+    judge can reference lines that match the logged analyser_code.py.
+
+    Args:
+        code (str): The generated Python code.
+    Returns:
+        str: The code with "<number> | " in front of every line.
+    """
+    lines = code.splitlines()
+    width = len(str(len(lines)))
+    return "\n".join(
+        f"{number:>{width}} | {line}" for number, line in enumerate(lines, start=1)
+    )
+
+
 def _read_table(content: bytes, file_name: str, raw: bool = False) -> pd.DataFrame:
     # raw=True keeps every value as its original text (no type inference, no
     # NaN conversion); otherwise pandas infers dtypes like the backend does.
@@ -168,6 +220,13 @@ class LLMJudge:
             model,
             output_type=CodeJudgement,
             system_prompt=config.code_judge.system_prompt,
+            model_settings=model_settings,
+            output_retries=config.retries,
+        )
+        self._bug_agent = Agent(
+            model,
+            output_type=BugReport,
+            system_prompt=config.bug_judge.system_prompt,
             model_settings=model_settings,
             output_retries=config.retries,
         )
@@ -212,25 +271,74 @@ class LLMJudge:
         Returns:
             CodeJudgement: Explanation, evidence and score per code criterion.
         """
-        max_chars = self._config.max_data_chars
         prompt = Template(self._config.code_judge.user_prompt_template).substitute(
-            user_request=user_request,
-            code_summary=code_summary or "(none)",
+            **self._code_context(user_request, code_summary, input_file, error_message),
             python_code=python_code,
-            execution_result=(
+            rubrics=self._config.code_judge.render_rubrics(),
+        )
+        return self._code_agent.run_sync(prompt).output
+
+    def judge_bugs(
+        self,
+        user_request: str,
+        code_summary: str,
+        python_code: str,
+        input_file: Path,
+        error_message: str | None,
+        output_csv: bytes | None,
+    ) -> BugReport:
+        """Lists the generated code's bugs, each with the line it is on and a
+        short reason, for finding out why the code fails or gives a wrong result.
+        It sees what the code judge sees, with numbered code lines, plus the
+        output data the code produced.
+
+        Args:
+            user_request (str): The user's analysis request.
+            code_summary (str): The agent's summary of its code.
+            python_code (str): The generated Python code.
+            input_file (Path): The data file the analyser was given.
+            error_message (str | None): The backend's error (traceback), None if
+                execution succeeded.
+            output_csv (bytes | None): The output data the code saved, if any.
+        Returns:
+            BugReport: One issue per bug, empty if the code is correct.
+        """
+        output_data = (
+            describe_table(output_csv, "output.csv", self._config.max_data_chars)
+            if output_csv is not None
+            else "(the code saved no output data file)"
+        )
+        prompt = Template(self._config.bug_judge.user_prompt_template).substitute(
+            **self._code_context(user_request, code_summary, input_file, error_message),
+            python_code=number_lines(python_code),
+            output_data=output_data,
+        )
+        return self._bug_agent.run_sync(prompt).output
+
+    def _code_context(
+        self,
+        user_request: str,
+        code_summary: str,
+        input_file: Path,
+        error_message: str | None,
+    ) -> dict[str, str]:
+        # Prompt variables shared by the code and bug judges.
+        max_chars = self._config.max_data_chars
+        return {
+            "user_request": user_request,
+            "code_summary": code_summary or "(none)",
+            "execution_result": (
                 "succeeded"
                 if error_message is None
                 else "failed:\n" + _truncate(error_message, max_chars)
             ),
-            input_data=profile_table(
+            "input_data": profile_table(
                 input_file.read_bytes(),
                 input_file.name,
                 self._config.code_judge_sample_rows,
                 max_chars,
             ),
-            rubrics=self._config.code_judge.render_rubrics(),
-        )
-        return self._code_agent.run_sync(prompt).output
+        }
 
     def judge_visualisation(
         self,

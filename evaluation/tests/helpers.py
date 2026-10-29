@@ -19,11 +19,20 @@ class ScriptedJudgeModel:
     recording every request it received."""
 
     def __init__(
-        self, code_score: int = 4, visualisation_score: int = 3, fail: bool = False
+        self,
+        code_score: int = 4,
+        visualisation_score: int = 3,
+        fail: bool = False,
+        issues: list[dict[str, Any]] | None = None,
     ) -> None:
         self.code_score = code_score
         self.visualisation_score = visualisation_score
         self.fail = fail
+        self.issues = (
+            issues
+            if issues is not None
+            else [{"line": 1, "kind": "wrong_result", "reason": "Plots nothing."}]
+        )
         self.requests: list[list[ModelMessage]] = []
         self.model = FunctionModel(self._respond)
 
@@ -37,6 +46,8 @@ class ScriptedJudgeModel:
         properties = tool.parameters_json_schema["properties"]
         if "ok" in properties:  # LLMJudge.check_model
             args: dict[str, Any] = {"ok": True}
+        elif "issues" in properties:  # LLMJudge.judge_bugs
+            args = {"issues": self.issues}
         elif "code_simplicity" in properties:
             args = {name: criterion(self.code_score) for name in properties}
         else:

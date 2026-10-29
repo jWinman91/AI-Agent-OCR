@@ -28,6 +28,7 @@ kontoauszug:
     and "01. März 2026" becomes "01. 3 2026".
     Parse values with a two-digit year with format "%d. %m %y"
     and values with a four-digit year with format "%d. %m %Y".
+    Do not sort the data by date since the data is already sorted by date in the input file.
 #saldo_timeseries:
 #  data_file: kontoauszug.csv
 #  ground_truth:
