@@ -375,6 +375,13 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsInstance(response, AnalyserResponse)
         self.assertEqual(response.python_code, "pass")
+        fenced = await validator.validate_output(
+            "<CODE>\n```python\nx = 1\n```\n</CODE><SUMMARY>summary</SUMMARY>",
+            "analyser",
+            AnalyserResponse(python_code="", code_summary=""),
+        )
+        self.assertIsInstance(fenced, AnalyserResponse)
+        self.assertEqual(fenced.python_code, "x = 1")
         self.assertEqual(await validator.validate_output("plain", "test", ""), "plain")
 
     async def test_analyser_repair_order(self) -> None:
@@ -408,6 +415,20 @@ class AgentContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repair["agent"], "code_repair")
         self.assertIn("raise ValueError('original')", repair["user_prompt"])
         self.assertIn("ValueError: original", repair["user_prompt"])
+
+    def test_traceback_section_only_with_previous_error(self) -> None:
+        template = "before\n{previous_error}\nafter {x}"
+        self.assertEqual(
+            AgentsFactory._fill_system_prompt(
+                template, {"previous_error": None, "x": 1}
+            ),
+            "before\n\nafter 1",
+        )
+        rendered = AgentsFactory._fill_system_prompt(
+            template, {"previous_error": "boom {not a field}", "x": 1}
+        )
+        self.assertIn("**TRACEBACK OF PREVIOUS ERROR**", rendered)
+        self.assertIn("boom {not a field}", rendered)
 
 
 class ExecutionDataContracts(unittest.TestCase):
