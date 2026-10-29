@@ -60,13 +60,25 @@ class FakeAgentClient:
         self.data = data
         self.calls: list[str] = []
         self.uploaded: list[str] = []
+        self.config: dict[str, Any] = {
+            "model": "gemma4:latest",
+            "model_provider": "ollama",
+            "system_prompt_user": "",
+        }
 
     def update_agents(self) -> None:
         self.calls.append("update_agents")
 
-    def get_config(self, agent_name: str) -> dict[str, Any]:
-        self.calls.append(f"get_config:{agent_name}")
-        return {"model": "gemma4:latest", "model_provider": "ollama"}
+    def get_config(self, agent_name: str, full_prompt: bool = True) -> dict[str, Any]:
+        self.calls.append(f"get_config:{agent_name}:{full_prompt}")
+        config = dict(self.config)
+        if full_prompt:
+            config["system_prompt_user"] = f"FULL[{config['system_prompt_user']}]"
+        return config
+
+    def upload_config(self, agent_name: str, config: dict[str, Any]) -> None:
+        self.calls.append(f"upload_config:{agent_name}")
+        self.config = dict(config)
 
     def upload_data_file(self, file: UploadFile) -> None:
         self.uploaded.append(file.filename or "")

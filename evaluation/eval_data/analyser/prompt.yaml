@@ -2,6 +2,35 @@ kontoauszug:
   data_file: kontoauszug.csv
   ground_truth: monthly_transaction_sum.png
   prompt: |
-    here is data from my bank account statement which shows the SALDO for each transaction.
-    first calculate the transaction amount for each transaction by taking the difference (make sure to convert the saldo to numerical value first).
-    then filter on Zinsen and Ertrag and plot the sum of the transaction amount per month in a time series plot
+    here is data from my bank account statement which shows the Saldo for each transaction.
+    first calculate the transaction amount for each transaction by taking the difference
+    (make sure to convert the saldo to numerical value first).
+    then filter on Zinsen and Ertrag and plot the sum of the transaction amount per month in a time series plot.
+    Use the "Datum" column for the x-axis and the sum of the transaction amount for the y-axis.
+  system_prompt_user: |
+    Use the "Datum" column for any date-based analysis or plotting (like a time series).
+    The "Datum" values are German dates written as day, month abbreviation and year,
+    e.g. "01. Jan 2026" or "01. März 2026". pandas cannot parse given month names since they are custom,
+    so first replace the month name with its month number using this mapping, then parse the date:
+    Jan: 1,
+    Feb: 2,
+    März: 3,
+    Apr: 4,
+    Mai: 5,
+    Jun: 6,
+    Jul: 7,
+    Aug: 8,
+    Sep: 9,
+    Okt: 10,
+    Nov: 11,
+    Dez: 12.
+    Keep the dots and spaces: after replacing, "01. Jan 26" becomes "01. 1 26"
+    and "01. März 2026" becomes "01. 3 2026".
+    Parse values with a two-digit year with format "%d. %m %y"
+    and values with a four-digit year with format "%d. %m %Y".
+#saldo_timeseries:
+#  data_file: kontoauszug.csv
+#  ground_truth:
+#  prompt: |
+#  system_prompt_user: |
+#

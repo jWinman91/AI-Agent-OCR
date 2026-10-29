@@ -79,21 +79,40 @@ class AgentClient:
         assert isinstance(result, dict)
         return result
 
-    def get_config(self, agent_name: AgentName) -> dict[str, Any]:
-        """Gets an agent's configuration, including its full system prompt.
+    def get_config(
+        self, agent_name: AgentName, full_prompt: bool = True
+    ) -> dict[str, Any]:
+        """Gets an agent's configuration.
 
         Args:
             agent_name (AgentName): The agent to get the configuration for.
+            full_prompt (bool): If True, system_prompt_user holds the full built
+                system prompt; otherwise it holds only the user-editable part, as
+                stored and as upload_config expects it.
         Returns:
             dict[str, Any]: The agent configuration.
         """
         config = self._be_request.get(
             path="get_config",
-            params={"config_name": agent_name, "full_prompt": "true"},
+            params={
+                "config_name": agent_name,
+                "full_prompt": "true" if full_prompt else "false",
+            },
             data_type=None,
         )
         assert isinstance(config, dict)
         return config
+
+    def upload_config(self, agent_name: AgentName, config: dict[str, Any]) -> None:
+        """Stores an agent's configuration via /upload_config, like saving it in
+        the UI. Takes effect for runs after the next update_agents.
+
+        Args:
+            agent_name (AgentName): The agent to configure.
+            config (dict[str, Any]): The configuration, in the shape get_config
+                returns with full_prompt=False.
+        """
+        self._be_request.post("upload_config/", agent_name, config)
 
     def download_data(self, df_path: Path) -> bytes:
         """Downloads a CSV produced by an agent via /df_path/.../download_data.

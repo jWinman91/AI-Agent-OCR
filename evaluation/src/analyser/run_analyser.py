@@ -29,14 +29,32 @@ class AnalyserRunner:
     def __init__(self, client: AgentClient | None = None) -> None:
         self._client = client or AgentClient()
 
-    def prepare(self) -> dict[str, Any]:
-        """Rebuilds the backend agents from the current config and returns the
-        analyser config, so the backend picks up whatever config change the user
-        made before this run and the run can log which model it used.
+    def current_system_prompt_user(self) -> str:
+        """Returns the analyser's stored system_prompt_user, so it can be restored
+        after the experiments.
 
         Returns:
-            dict[str, Any]: The analyser agent config (model, provider, prompt).
+            str: The user-editable part of the analyser's system prompt.
         """
+        return str(
+            self._client.get_config("analyser", full_prompt=False)["system_prompt_user"]
+        )
+
+    def configure(self, system_prompt_user: str) -> dict[str, Any]:
+        """Sets the analyser's system_prompt_user via /upload_config, keeping the
+        rest of its stored config (model, provider, settings), and rebuilds the
+        backend agents so the next run uses it.
+
+        Args:
+            system_prompt_user (str): The experiment's domain knowledge about the
+                use case.
+        Returns:
+            dict[str, Any]: The resulting analyser config with the full system
+            prompt, so the run can log which model and prompt it used.
+        """
+        config = self._client.get_config("analyser", full_prompt=False)
+        config["system_prompt_user"] = system_prompt_user
+        self._client.upload_config("analyser", config)
         self._client.update_agents()
         return self._client.get_config("analyser")
 

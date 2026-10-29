@@ -5,8 +5,10 @@ data file to analyse (CSV/Excel in eval_data/analyser/), the user prompt to try
 and optionally a ground truth reference from the shared ground_truth/ directory -
 see src/analyser/experiment_spec.py for the format.
 
-For each experiment the data file is uploaded to the backend and the analyser is
-run on the prompt. The run is then scored:
+For each experiment the analyser's system_prompt_user is set to the entry's one
+(empty if it has none) via /upload_config, the data file is uploaded to the
+backend and the analyser is run on the prompt. The system_prompt_user stored before
+the CLI started is restored afterwards. The run is then scored:
 - execution_success: 1 if the backend reported no error, else 0 (the generated
   code is not executed again),
 - code_simplicity, code_correctness: judged from the generated code, the
@@ -76,7 +78,6 @@ class EvaluationContext:
 
     runner: AnalyserRunner
     evaluator: AnalyserEvaluator
-    analyser_config: dict[str, Any]
     judge_model: str
     judge_config_sha: str
 
@@ -140,6 +141,7 @@ def log_to_mlflow(
     run_name: str,
     outcome: AnalyserRunOutcome,
     evaluation: AnalyserEvaluation,
+    analyser_config: dict[str, Any],
     context: EvaluationContext,
 ) -> None:
     """Logs one analyser experiment run's params, metrics, tags and outputs to
@@ -150,7 +152,9 @@ def log_to_mlflow(
         run_name (str): Name of this run.
         outcome (AnalyserRunOutcome): What the analyser returned.
         evaluation (AnalyserEvaluation): The judge results.
-        context (EvaluationContext): Shared run settings (models, config hash).
+        analyser_config (dict[str, Any]): The analyser agent config used.
+        context (EvaluationContext): Shared run settings (judge model, config
+            hash).
     """
     tags = {"agent": "analyser"}
     if outcome.error_message:
@@ -164,7 +168,7 @@ def log_to_mlflow(
     # own artifact store.
     with tempfile.TemporaryDirectory() as tmp_dir:
         artifact_paths = write_artifacts(
-            Path(tmp_dir), outcome, evaluation, context.analyser_config
+            Path(tmp_dir), outcome, evaluation, analyser_config
         )
         log_run_to_mlflow(
             mlflow_experiment_name(spec.name, MLFLOW_PREFIX),
@@ -175,10 +179,8 @@ def log_to_mlflow(
                 "ground_truth": (
                     spec.ground_truth_path.name if spec.ground_truth_path else "none"
                 ),
-                "analyser_model": context.analyser_config.get("model"),
-                "analyser_model_provider": context.analyser_config.get(
-                    "model_provider"
-                ),
+                "analyser_model": analyser_config.get("model"),
+                "analyser_model_provider": analyser_config.get("model_provider"),
                 "judge_model": context.judge_model,
                 "judge_config_sha": context.judge_config_sha,
             },
@@ -204,6 +206,7 @@ def run_experiment(
     spec = load_experiment_spec(experiment_name)
 
     logger.info(f"Running experiment '{experiment_name}' (run '{run_name}')...")
+    analyser_config = context.runner.configure(spec.system_prompt_user)
     outcome = context.runner.run(spec.input_file, spec.user_prompt)
     logger.info(
         f"Analyser finished: execution_success={outcome.execution_success}, "
@@ -212,7 +215,7 @@ def run_experiment(
 
     logger.info("Judging...")
     evaluation = context.evaluator.evaluate(spec, outcome)
-    log_to_mlflow(spec, run_name, outcome, evaluation, context)
+    log_to_mlflow(spec, run_name, outcome, evaluation, analyser_config, context)
 
     scores = ", ".join(
         f"{name}={value if value is not None else '-'}"
@@ -260,21 +263,26 @@ def main() -> None:
     context = EvaluationContext(
         runner=runner,
         evaluator=AnalyserEvaluator(judge),
-        analyser_config=runner.prepare(),
         judge_model=judge_config.model,
         judge_config_sha=judge_config_sha(),
     )
 
-    if args.experiment_name is None:
-        run_all_experiments(
-            list(load_experiment_entries()),
-            args.run_name,
-            partial(run_experiment, context=context),
-            ALL_METRIC_NAMES,
-            mlflow_prefix=MLFLOW_PREFIX,
-        )
-    else:
-        run_experiment(args.experiment_name, args.run_name, context)
+    # Each experiment overwrites the stored system_prompt_user, so the one the
+    # user had set (e.g. in the UI) is put back once the experiments are done.
+    original_system_prompt_user = runner.current_system_prompt_user()
+    try:
+        if args.experiment_name is None:
+            run_all_experiments(
+                list(load_experiment_entries()),
+                args.run_name,
+                partial(run_experiment, context=context),
+                ALL_METRIC_NAMES,
+                mlflow_prefix=MLFLOW_PREFIX,
+            )
+        else:
+            run_experiment(args.experiment_name, args.run_name, context)
+    finally:
+        runner.configure(original_system_prompt_user)
 
 
 if __name__ == "__main__":

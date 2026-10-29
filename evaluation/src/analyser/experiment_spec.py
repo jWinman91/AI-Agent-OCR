@@ -2,17 +2,22 @@
 
 Every top-level key of prompt.yaml is one experiment. It maps to the data file to
 analyse (in eval_data/analyser/), the user prompt to try, and optionally a ground
-truth file in the shared ground_truth/ directory:
+truth file in the shared ground_truth/ directory and the analyser's
+system_prompt_user (the domain knowledge about the use case the user would enter in
+the UI):
 
     kontoauszug:
       data_file: kontoauszug.csv
       ground_truth: monthly_transaction_sum.png
       prompt: |
         Plot the monthly sum of incoming and outgoing transactions.
+      system_prompt_user: |
+        The "Datum" values are German dates like "01. März 2026".
 
 Several experiments can use the same data file with different prompts. A named
 ground truth is required to exist; it is shown to the judge as a reference for a
 good result - a .png reference plot, or a .csv with the expected analysis output.
+Without system_prompt_user the analyser runs with an empty one.
 """
 
 from dataclasses import dataclass
@@ -32,6 +37,7 @@ class AnalyserExperimentSpec:
     input_file: Path
     user_prompt: str
     ground_truth_path: Path | None
+    system_prompt_user: str = ""
 
 
 def load_experiment_entries(
@@ -71,8 +77,8 @@ def load_experiment_spec(
         test_data_dir (Path): The analyser's test data directory.
         ground_truth_dir (Path): The shared ground truth directory.
     Returns:
-        AnalyserExperimentSpec: The experiment's data file, prompt and
-        optional ground truth.
+        AnalyserExperimentSpec: The experiment's data file, prompt, optional
+        ground truth and system_prompt_user.
     Raises:
         ExperimentDataMissing: If the prompt.yaml entry is missing or invalid,
             or its data file or named ground truth file doesn't exist.
@@ -88,10 +94,13 @@ def load_experiment_spec(
         isinstance(entry, dict)
         and isinstance(entry.get("data_file"), str)
         and isinstance(entry.get("prompt"), str)
+        # A key without a value loads as None.
+        and isinstance(entry.get("system_prompt_user") or "", str)
     ):
         raise ExperimentDataMissing(
             f"'{experiment_name}' in {prompt_path} must be a mapping with "
-            f"'data_file' and 'prompt' keys (and an optional 'ground_truth')."
+            f"'data_file' and 'prompt' keys (and optional 'ground_truth' and "
+            f"'system_prompt_user' keys)."
         )
 
     input_file = test_data_dir / entry["data_file"]
@@ -121,4 +130,5 @@ def load_experiment_spec(
         input_file=input_file,
         user_prompt=entry["prompt"],
         ground_truth_path=ground_truth_path,
+        system_prompt_user=entry.get("system_prompt_user") or "",
     )

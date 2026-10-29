@@ -65,11 +65,14 @@ def entry(
     prompt: str = "Plot my weight.",
     data_file: str = "weight.csv",
     ground_truth: str | None = None,
+    system_prompt_user: str | None = None,
 ) -> dict[str, str]:
     """A prompt.yaml entry for the weight.csv created by make_experiment_dir."""
     values = {"data_file": data_file, "prompt": prompt}
     if ground_truth is not None:
         values["ground_truth"] = ground_truth
+    if system_prompt_user is not None:
+        values["system_prompt_user"] = system_prompt_user
     return values
 
 
@@ -112,6 +115,15 @@ class ExperimentSpecTest(unittest.TestCase):
         self.assertEqual(spec.user_prompt, "Plot my weight.")
         self.assertEqual(spec.input_file.name, "weight.csv")
         self.assertIsNone(spec.ground_truth_path)
+        self.assertEqual(spec.system_prompt_user, "")
+
+    def test_entry_with_system_prompt_user(self) -> None:
+        spec = self.load({"weight": entry(system_prompt_user="Weight is in kg.")})
+        self.assertEqual(spec.system_prompt_user, "Weight is in kg.")
+
+    def test_empty_system_prompt_user(self) -> None:
+        spec = self.load({"weight": {**entry(), "system_prompt_user": None}})
+        self.assertEqual(spec.system_prompt_user, "")
 
     def test_entry_with_ground_truth(self) -> None:
         spec = self.load({"weight": entry(ground_truth="ref.png")})
@@ -229,11 +241,27 @@ class AnalyserRunnerTest(unittest.TestCase):
         assert result.download_error is not None
         self.assertIn("plots/plot.png", result.download_error)
 
-    def test_prepare_refreshes_agents(self) -> None:
+    def test_configure_uploads_system_prompt_user(self) -> None:
         client = FakeAgentClient(SUCCESS_RESULT)
-        config = AnalyserRunner(client).prepare()  # type: ignore[arg-type]
-        self.assertEqual(client.calls, ["update_agents", "get_config:analyser"])
-        self.assertEqual(config["model"], "gemma4:latest")
+        config = AnalyserRunner(client).configure("Weight is in kg.")  # type: ignore[arg-type]
+        self.assertEqual(
+            client.calls,
+            [
+                "get_config:analyser:False",
+                "upload_config:analyser",
+                "update_agents",
+                "get_config:analyser:True",
+            ],
+        )
+        self.assertEqual(client.config["system_prompt_user"], "Weight is in kg.")
+        self.assertEqual(client.config["model"], "gemma4:latest")
+        self.assertEqual(config["system_prompt_user"], "FULL[Weight is in kg.]")
+
+    def test_current_system_prompt_user(self) -> None:
+        client = FakeAgentClient(SUCCESS_RESULT)
+        client.config["system_prompt_user"] = "from the UI"
+        runner = AnalyserRunner(client)  # type: ignore[arg-type]
+        self.assertEqual(runner.current_system_prompt_user(), "from the UI")
 
 
 class JudgeAndEvaluatorTest(unittest.TestCase):
@@ -435,15 +463,15 @@ class ProfileTableTest(unittest.TestCase):
 class RunExperimentTest(MlflowTestCase):
     def test_logs_scored_run_with_artifacts(self) -> None:
         test_data_dir, ground_truth_dir = make_experiment_dir(
-            self.tmp, {"weight": entry()}
+            self.tmp, {"weight": entry(system_prompt_user="Weight is in kg.")}
         )
         judge_model = ScriptedJudgeModel()
+        client = FakeAgentClient(SUCCESS_RESULT)
         context = EvaluationContext(
-            runner=AnalyserRunner(FakeAgentClient(SUCCESS_RESULT)),  # type: ignore[arg-type]
+            runner=AnalyserRunner(client),  # type: ignore[arg-type]
             evaluator=AnalyserEvaluator(
                 LLMJudge(load_judge_config(), model=judge_model.model)
             ),
-            analyser_config={"model": "gemma4:latest", "model_provider": "ollama"},
             judge_model="openai-responses:gpt-6.1-sol",
             judge_config_sha="abc",
         )
@@ -457,6 +485,11 @@ class RunExperimentTest(MlflowTestCase):
         ):
             run_experiment("weight", "run1", context)
 
+        self.assertEqual(client.config["system_prompt_user"], "Weight is in kg.")
+        self.assertLess(
+            client.calls.index("upload_config:analyser"),
+            client.calls.index("run:analyser"),
+        )
         run = self.only_run("analyser/weight")
         self.assertEqual(set(run.data.metrics), set(ALL_METRIC_NAMES))
         self.assertEqual(run.data.metrics["code_simplicity"], 4.0)
@@ -480,6 +513,10 @@ class RunExperimentTest(MlflowTestCase):
                 "judge_config.yaml",
             },
         )
+        logged_config = yaml.safe_load(
+            mlflow.artifacts.load_text(f"runs:/{run.info.run_id}/analyser_config.yaml")
+        )
+        self.assertEqual(logged_config["system_prompt_user"], "FULL[Weight is in kg.]")
         judgements = json.loads(
             mlflow.artifacts.load_text(f"runs:/{run.info.run_id}/judge_results.json")
         )
