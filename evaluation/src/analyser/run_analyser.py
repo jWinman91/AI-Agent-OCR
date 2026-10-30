@@ -7,7 +7,11 @@ from typing import Any
 
 from fastapi import UploadFile
 from loguru import logger
-from src.backend_client.agent_client import AgentClient
+from src.backend_client.agent_client import (
+    AgentClient,
+    configure_domain_knowledge_prompt,
+    current_domain_knowledge_prompt,
+)
 
 
 @dataclass
@@ -36,16 +40,11 @@ class AnalyserRunner:
         Returns:
             str: The user-editable part of the analyser's system prompt.
         """
-        return str(
-            self._client.get_config("analyser", full_prompt=False)[
-                "domain_knowledge_prompt"
-            ]
-        )
+        return current_domain_knowledge_prompt(self._client, "analyser")
 
     def configure(self, domain_knowledge_prompt: str) -> dict[str, Any]:
-        """Sets the analyser's domain_knowledge_prompt via /upload_config, keeping the
-        rest of its stored config (model, provider, settings), and rebuilds the
-        backend agents so the next run uses it.
+        """Sets the analyser's domain_knowledge_prompt and rebuilds the backend
+        agents (see configure_domain_knowledge_prompt).
 
         Args:
             domain_knowledge_prompt (str): The experiment's domain knowledge about the
@@ -54,11 +53,9 @@ class AnalyserRunner:
             dict[str, Any]: The resulting analyser config with the full system
             prompt, so the run can log which model and prompt it used.
         """
-        config = self._client.get_config("analyser", full_prompt=False)
-        config["domain_knowledge_prompt"] = domain_knowledge_prompt
-        self._client.upload_config("analyser", config)
-        self._client.update_agents()
-        return self._client.get_config("analyser")
+        return configure_domain_knowledge_prompt(
+            self._client, "analyser", domain_knowledge_prompt
+        )
 
     def run(self, input_file: Path, user_prompt: str) -> AnalyserRunOutcome:
         """Uploads the input file, runs the analyser on it and downloads the

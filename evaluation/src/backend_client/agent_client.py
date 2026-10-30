@@ -144,3 +144,41 @@ class AgentClient:
         )
         assert isinstance(content, bytes)
         return content
+
+
+def current_domain_knowledge_prompt(client: AgentClient, agent_name: AgentName) -> str:
+    """Returns an agent's stored domain_knowledge_prompt, so it can be restored
+    after the experiments.
+
+    Args:
+        client (AgentClient): The backend client.
+        agent_name (AgentName): The agent to read the prompt of.
+    Returns:
+        str: The user-editable part of the agent's system prompt.
+    """
+    return str(
+        client.get_config(agent_name, full_prompt=False)["domain_knowledge_prompt"]
+    )
+
+
+def configure_domain_knowledge_prompt(
+    client: AgentClient, agent_name: AgentName, domain_knowledge_prompt: str
+) -> dict[str, Any]:
+    """Sets an agent's domain_knowledge_prompt via /upload_config, keeping the rest
+    of its stored config (model, provider, settings), and rebuilds the backend
+    agents so the next run uses it.
+
+    Args:
+        client (AgentClient): The backend client.
+        agent_name (AgentName): The agent to configure.
+        domain_knowledge_prompt (str): The experiment's domain knowledge about the
+            use case.
+    Returns:
+        dict[str, Any]: The resulting agent config with the full system prompt,
+        so the run can log which model and prompt it used.
+    """
+    config = client.get_config(agent_name, full_prompt=False)
+    config["domain_knowledge_prompt"] = domain_knowledge_prompt
+    client.upload_config(agent_name, config)
+    client.update_agents()
+    return client.get_config(agent_name)

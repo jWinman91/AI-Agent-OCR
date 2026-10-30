@@ -3,10 +3,15 @@ data based on user prompts."""
 
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import yaml
 from fastapi import UploadFile
-from src.backend_client.agent_client import AgentClient
+from src.backend_client.agent_client import (
+    AgentClient,
+    configure_domain_knowledge_prompt,
+    current_domain_knowledge_prompt,
+)
 from src.extractor import EXTRACTED_DATA_DIR, EXTRACTOR_TEST_DATA_DIR
 
 UPLOADABLE_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
@@ -20,15 +25,38 @@ class DataExtractor:
         protocol: str = "http",
         extracted_data_dir: Path = EXTRACTED_DATA_DIR,
         test_data_dir: Path = EXTRACTOR_TEST_DATA_DIR,
+        client: AgentClient | None = None,
     ) -> None:
-        self._client = AgentClient(ip=ip, port=port, protocol=protocol)
-
-        # update agents
-        self._client.update_agents()
+        self._client = client or AgentClient(ip=ip, port=port, protocol=protocol)
 
         # some directories as constants
         self._EXTRACTED_DATA_DIR = extracted_data_dir
         self._TEST_DATA_DIR = test_data_dir
+
+    def current_domain_knowledge_prompt(self) -> str:
+        """Returns the data extractor's stored domain_knowledge_prompt, so it can be
+        restored after the experiments.
+
+        Returns:
+            str: The user-editable part of the data extractor's system prompt.
+        """
+        return current_domain_knowledge_prompt(self._client, "data_extractor")
+
+    def configure(self, domain_knowledge_prompt: str) -> dict[str, Any]:
+        """Sets the data extractor's domain_knowledge_prompt and rebuilds the
+        backend agents (see configure_domain_knowledge_prompt), so the run also
+        picks up whatever other config change the user made before starting it.
+
+        Args:
+            domain_knowledge_prompt (str): The experiment's domain knowledge about the
+                use case.
+        Returns:
+            dict[str, Any]: The resulting data extractor config with the full
+            system prompt.
+        """
+        return configure_domain_knowledge_prompt(
+            self._client, "data_extractor", domain_knowledge_prompt
+        )
 
     def load_files(self, experiment_name: str) -> list[UploadFile]:
         """Loads all files from the directory inside TEST_DATA_DIR and returns a list of

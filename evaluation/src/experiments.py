@@ -2,11 +2,11 @@
 
 Each agent's experiments live in its test data directory with one shared
 prompt.yaml keyed by experiment name: for the extractor an experiment is a
-subdirectory of test files (e.g. eval_data/extractor/body_weight/), for the
-analyser a prompt.yaml entry naming its data file (see
-src/analyser/experiment_spec.py). Each experiment run is logged to MLflow with
-a 1:1 mapping: MLflow experiment = experiment_name (prefixed with "analyser/"
-for the analyser), MLflow run = run_name.
+subdirectory of test files (e.g. eval_data/extractor/body_weight/, see
+src/extractor/experiment_spec.py), for the analyser a prompt.yaml entry naming
+its data file (see src/analyser/experiment_spec.py). Each experiment run is
+logged to MLflow with a 1:1 mapping: MLflow experiment = experiment_name
+(prefixed with "analyser/" for the analyser), MLflow run = run_name.
 
 All paths are resolved relative to the evaluation/ directory, so the CLIs work
 regardless of the directory they are started from.
@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import mlflow
-import yaml
 from loguru import logger
 
 EVALUATION_DIR = Path(__file__).resolve().parent.parent
@@ -68,78 +67,6 @@ def discover_experiment_names(test_data_dir: Path) -> list[str]:
         list[str]: Sorted experiment names (subdirectory names).
     """
     return sorted(path.name for path in test_data_dir.iterdir() if path.is_dir())
-
-
-def load_user_prompt(test_data_dir: Path, experiment_name: str) -> str:
-    """Loads the user prompt for an experiment from the agent's shared
-    prompt.yaml file.
-
-    Args:
-        test_data_dir (Path): The agent's test data directory containing
-            prompt.yaml.
-        experiment_name (str): Name of the experiment to load the prompt for.
-    Returns:
-        str: The user prompt string.
-    """
-    # All experiment prompts of one agent live in one file, keyed by
-    # experiment_name, rather than one prompt.yaml per experiment folder -
-    # easier to see/edit them all at a glance and keep in sync with the
-    # experiment subfolders.
-    prompt_path = test_data_dir / PROMPT_FILE_NAME
-    if not prompt_path.exists():
-        raise FileNotFoundError(
-            f"Prompt file not found at {prompt_path}. "
-            f"Create it with a '{experiment_name}' key."
-        )
-
-    with prompt_path.open("r") as f:
-        prompts = yaml.safe_load(f)
-
-    if not prompts or experiment_name not in prompts:
-        raise ValueError(
-            f"{prompt_path} must define a '{experiment_name}' key "
-            f"with the user prompt for that experiment."
-        )
-
-    return str(prompts[experiment_name])
-
-
-def check_experiment_ready(
-    test_data_dir: Path, experiment_name: str, ground_truth_path: Path
-) -> None:
-    """Validates that an experiment has everything needed to run and evaluate.
-
-    Checked upfront (before any backend call) so a missing prompt, ground
-    truth, or test file is reported immediately instead of wasting a real
-    agent call on an experiment that can't be evaluated anyway.
-
-    Args:
-        test_data_dir (Path): The agent's test data directory.
-        experiment_name (str): Name of the experiment to validate.
-        ground_truth_path (Path): The reference file this experiment is scored
-            against.
-    Raises:
-        ExperimentDataMissing: If the prompt, ground truth, or test data files
-            for this experiment are missing.
-    """
-    try:
-        load_user_prompt(test_data_dir, experiment_name)
-    except (FileNotFoundError, ValueError) as e:
-        raise ExperimentDataMissing(str(e)) from e
-
-    if not ground_truth_path.exists():
-        raise ExperimentDataMissing(
-            f"Ground truth file not found at {ground_truth_path}."
-        )
-
-    experiment_dir = test_data_dir / experiment_name
-    if not experiment_dir.is_dir() or not any(
-        path.is_file() for path in experiment_dir.iterdir()
-    ):
-        raise ExperimentDataMissing(
-            f"No test data files found for experiment '{experiment_name}' "
-            f"in {experiment_dir}."
-        )
 
 
 def flatten_metrics(metrics: dict[str, Any]) -> dict[str, float]:

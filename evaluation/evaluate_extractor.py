@@ -4,6 +4,9 @@ Runs the data extractor against the test files in
 eval_data/extractor/{experiment_name}/, using the prompt for that experiment from
 eval_data/extractor/prompt.yaml, then evaluates the result against the shared
 ground_truth/{experiment_name}.csv and reports metrics.
+Before each experiment the data extractor's domain_knowledge_prompt is set to the
+experiment's one from prompt.yaml (empty if omitted) and stored in the backend; the
+domain_knowledge_prompt stored before the run is restored at the end.
 Metrics, params, and output files are logged to MLflow (sqlite:///mlflow.db) under
 an MLflow experiment named experiment_name and a run named run_name, so past runs
 can be browsed and compared via `mlflow ui --backend-store-uri sqlite:///mlflow.db`.
@@ -22,23 +25,22 @@ Usage:
 """
 
 import argparse
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import yaml
 from loguru import logger
 from src.experiments import (
-    GROUND_TRUTH_DIR,
-    check_experiment_ready,
     configure_mlflow,
     discover_experiment_names,
     flatten_metrics,
-    load_user_prompt,
     log_run_to_mlflow,
     run_all_experiments,
 )
 from src.extractor import EXTRACTED_DATA_DIR, EXTRACTOR_TEST_DATA_DIR
 from src.extractor.evaluate import ALL_OVERALL_METRIC_NAMES, DataExtractorEvaluator
+from src.extractor.experiment_spec import load_experiment_spec
 from src.extractor.extract_data import DataExtractor
 
 
@@ -91,27 +93,26 @@ def log_to_mlflow(
     )
 
 
-def run_experiment(experiment_name: str, run_name: str) -> None:
+def run_experiment(
+    experiment_name: str, run_name: str, extractor: DataExtractor
+) -> None:
     """Runs a full extract-and-evaluate experiment for the data_extractor agent.
 
     Args:
         experiment_name (str): Name of the experiment (subfolder of
             eval_data/extractor/).
         run_name (str): Name of this run, used to tag the saved outputs.
+        extractor (DataExtractor): The backend wrapper shared by all experiments.
     """
     # Fail fast (before any backend call) if the prompt, ground truth, or test
     # files for this experiment are missing.
-    check_experiment_ready(
-        EXTRACTOR_TEST_DATA_DIR,
-        experiment_name,
-        ground_truth_path=GROUND_TRUTH_DIR / f"{experiment_name}.csv",
-    )
-    user_prompt = load_user_prompt(EXTRACTOR_TEST_DATA_DIR, experiment_name)
+    spec = load_experiment_spec(experiment_name)
+    user_prompt = spec.user_prompt
 
     logger.info(f"Running experiment '{experiment_name}' (run '{run_name}')...")
-    # DataExtractor.__init__ triggers /update_agents, so the backend picks up
-    # whatever config change the user made before starting this run.
-    extractor = DataExtractor()
+    # Also triggers /update_agents, so the backend picks up whatever config
+    # change the user made before starting this run.
+    extractor.configure(spec.domain_knowledge_prompt)
 
     files = extractor.load_files(experiment_name)
     logger.info(f"Uploading {len(files)} file(s)...")
@@ -157,7 +158,7 @@ def run_experiment(experiment_name: str, run_name: str) -> None:
 
 def main() -> None:
     # experiment_name and run_name are the only CLI args - everything else
-    # (prompt, test data, ground truth) is looked up from disk by convention.
+    # (prompts, test data, ground truth) is looked up from disk by convention.
     parser = argparse.ArgumentParser(
         description="Run and evaluate data_extractor agent experiment(s)."
     )
@@ -179,15 +180,22 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_mlflow()
-    if args.experiment_name is None:
-        run_all_experiments(
-            discover_experiment_names(EXTRACTOR_TEST_DATA_DIR),
-            args.run_name,
-            run_experiment,
-            [f"{name}_overall" for name in ALL_OVERALL_METRIC_NAMES],
-        )
-    else:
-        run_experiment(args.experiment_name, args.run_name)
+    extractor = DataExtractor()
+    # Each experiment overwrites the stored domain_knowledge_prompt, so the one the
+    # user had set (e.g. in the UI) is put back once the experiments are done.
+    original_domain_knowledge_prompt = extractor.current_domain_knowledge_prompt()
+    try:
+        if args.experiment_name is None:
+            run_all_experiments(
+                discover_experiment_names(EXTRACTOR_TEST_DATA_DIR),
+                args.run_name,
+                partial(run_experiment, extractor=extractor),
+                [f"{name}_overall" for name in ALL_OVERALL_METRIC_NAMES],
+            )
+        else:
+            run_experiment(args.experiment_name, args.run_name, extractor)
+    finally:
+        extractor.configure(original_domain_knowledge_prompt)
 
 
 if __name__ == "__main__":

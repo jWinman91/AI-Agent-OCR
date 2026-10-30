@@ -1,12 +1,16 @@
-kontoauszug: |
-  you see here my bank account statement.
-  There is a table with columns DATUM, TYP, BESCHREIBUNG, ZAHLUNGSEINGANG, ZAHLUNGSAUSGANG, and SALDO and transactions per row.
-  Extract all values for the SALDO column, essentially for all transactions.
-body_weight: |
-  here is a picture of me standing on a scale.
-  Extract the body weight value given in kg from the image.
-  The values are always of the format XX.X kg and between 80.0 and 92.0 kg.
-kontoauszug-images: |
-  you see here my bank account statement.
-  There is a table with columns DATUM, TYP, BESCHREIBUNG, ZAHLUNGSEINGANG, ZAHLUNGSAUSGANG, and SALDO and transactions per row.
-  Extract all values for the SALDO column, essentially for all transactions.
+kontoauszug:
+  prompt: |
+    you see here my bank account statement.
+    There is a table with columns DATUM, TYP, BESCHREIBUNG, ZAHLUNGSEINGANG, ZAHLUNGSAUSGANG, and SALDO and transactions per row.
+    Extract all values for the SALDO column, essentially for all transactions.
+body_weight:
+  prompt: |
+    here is a picture of me standing on a scale.
+    Extract the body weight value given in kg from the image.
+  domain_knowledge_prompt: |
+    The values are always of the format XX.X kg and between 80.0 and 92.0 kg.
+kontoauszug-images:
+  prompt: |
+    you see here my bank account statement.
+    There is a table with columns DATUM, TYP, BESCHREIBUNG, ZAHLUNGSEINGANG, ZAHLUNGSAUSGANG, and SALDO and transactions per row.
+    Extract all values for the SALDO column, essentially for all transactions.
